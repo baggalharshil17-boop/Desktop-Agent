@@ -18,6 +18,23 @@ def _chunk_duration_ms(chunk: bytes, sample_rate: int) -> float:
 
 
 class AudioPipeline:
+    """Assembles raw microphone chunks into VAD-gated utterances.
+
+    Noise reduction is applied once per finalized utterance (at the moment it
+    is yielded), not per chunk. This is a deliberate deviation from the
+    original plan's literal "PyAudio -> noisereduce -> VAD gate -> buffer"
+    ordering: real `noisereduce` computes an STFT whose window is larger than
+    a single VAD-sized chunk (512 samples at 16kHz), so calling
+    `dsp.reduce_noise()` on one chunk raises
+    `ValueError: noverlap must be less than nperseg` and cannot work at any
+    real chunk size. Denoising also has no benefit for VAD scoring, since
+    Silero is trained to handle real-world noisy audio directly. VAD
+    therefore always scores the raw chunk, and denoising happens exactly
+    once, on the fully-assembled utterance buffer, immediately before it is
+    yielded -- which still satisfies the actual requirement that STT receives
+    denoised audio.
+    """
+
     def __init__(
         self,
         queue,
@@ -36,6 +53,14 @@ class AudioPipeline:
         self._silence_duration_ms = silence_duration_ms
         self._min_speech_duration_ms = min_speech_duration_ms
         self._apply_noise_reduction = apply_noise_reduction
+        # This event only reflects reality while `run()`'s async generator is
+        # actively being iterated. Blocking inside the `async for` loop body
+        # (e.g. awaiting a slow STT call before requesting the next
+        # utterance) freezes the generator and therefore freezes
+        # `speech_active` at its last value until iteration resumes. Phase 3
+        # must drive `run()` from a dedicated background task that
+        # continuously pulls utterances into an output queue -- not block
+        # inside the loop body -- or barge-in detection will not work.
         self.speech_active = asyncio.Event()
 
     async def run(self) -> AsyncIterator[bytes]:
@@ -48,12 +73,9 @@ class AudioPipeline:
             chunk = await self._queue.get()
             if chunk is None:
                 if in_utterance and speech_ms >= self._min_speech_duration_ms:
-                    yield bytes(buffer)
+                    yield self._finalize(buffer)
                 self.speech_active.clear()
                 return
-
-            if self._apply_noise_reduction:
-                chunk = dsp.reduce_noise(chunk, sample_rate=self._sample_rate)
 
             score = self._vad_scorer.score(chunk)
             is_speech = score >= self._speech_threshold
@@ -76,8 +98,14 @@ class AudioPipeline:
                 if silence_ms > self._silence_duration_ms:
                     self.speech_active.clear()
                     if speech_ms >= self._min_speech_duration_ms:
-                        yield bytes(buffer)
+                        yield self._finalize(buffer)
                     in_utterance = False
                     buffer = bytearray()
                     speech_ms = 0.0
                     silence_ms = 0.0
+
+    def _finalize(self, buffer: bytearray) -> bytes:
+        raw = bytes(buffer)
+        if self._apply_noise_reduction:
+            return dsp.reduce_noise(raw, sample_rate=self._sample_rate)
+        return raw

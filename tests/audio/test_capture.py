@@ -1,6 +1,5 @@
 import janus
 import pyaudio
-import pytest
 
 from financial_voice_agent.audio.capture import AudioCapture, make_capture_callback
 
@@ -98,4 +97,16 @@ def test_stop_before_start_does_not_raise():
     capture = AudioCapture(queue, pyaudio_factory=_FakePyAudio)
 
     capture.stop()  # must not raise
+    queue.close()
+
+
+def test_stop_pushes_end_of_stream_sentinel_to_queue():
+    queue = janus.Queue()
+    fake_pa = _FakePyAudio()
+    capture = AudioCapture(queue, pyaudio_factory=lambda: fake_pa)
+    capture.start()
+
+    capture.stop()
+
+    assert queue.sync_q.get_nowait() is None
     queue.close()

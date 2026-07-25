@@ -51,6 +51,7 @@ class AudioCapture:
             self._stream.stop_stream()
             self._stream.close()
             self._stream = None
+            self._queue.sync_q.put(None)
         if self._pa is not None:
             self._pa.terminate()
             self._pa = None

@@ -62,12 +62,22 @@
 ## Global Constraints
 
 - Python 3.11+ only (per PRD Section 9).
-- Microphone data contract: 16-bit PCM, mono, 16000 Hz, 512 or 1024-sample chunks (PRD Section 10 "Microphone → STT").
+- Microphone data contract: 16-bit PCM, mono, 16000 Hz, **exactly 512-sample chunks** (PRD Section 10 "Microphone → STT" suggested "512 or 1024-sample chunks", but the real Silero VAD model requires *exactly* 512 samples at 16kHz — 1024 is NOT valid. `SileroVadScorer.score()` enforces this with a clear `ValueError` rather than letting a mismatched chunk size fail deep inside a TorchScript call.)
 - Audio capture must hand off from the PyAudio callback thread to asyncio via a thread-safe queue (`janus` or `loop.call_soon_threadsafe`) — **never** a plain `asyncio.Queue` written to from the callback thread (PRD Section 11.2, the documented hard part).
-- VAD tuning values come from `Config` (Phase 1 `financial_voice_agent/config.py`): `vad_speech_threshold` (default 0.5), `vad_silence_duration_ms` (default 600), `vad_min_speech_duration_ms` (default 200). Silero VAD requires 16000 Hz input (PRD "Voice & Audio Design").
-- Pipeline order is fixed: PyAudio → noisereduce (stationary mode) → VAD gate → buffer (PRD "Voice & Audio Design").
+- VAD tuning values come from `Config` (Phase 1 `financial_voice_agent/config.py`): `vad_speech_threshold` (default 0.5), `vad_silence_duration_ms` (default 600), `vad_min_speech_duration_ms` (default 200). Silero VAD requires 16000 Hz input and exactly 512 samples per call (PRD "Voice & Audio Design").
+- Pipeline order: PyAudio → VAD gate (scores the raw chunk, never denoised) → buffer (raw chunks) → noisereduce (stationary mode), applied **once per finalized utterance**, not per chunk → yield. The PRD's literal "PyAudio → noisereduce → VAD gate → buffer" per-chunk ordering (PRD "Voice & Audio Design") is infeasible against the real libraries: `noisereduce`'s internal STFT window is larger than a single 512-sample VAD chunk, so calling it per-chunk raises `ValueError: noverlap must be less than nperseg` at any real chunk size. Denoising per chunk also has no VAD-accuracy benefit, since Silero is trained to score real-world noisy audio directly. Denoising once on the fully-assembled utterance, immediately before it is yielded, still satisfies the actual requirement (STT receives denoised audio).
 - Buffer the full utterance in memory, then wrap in WAV using stdlib `wave` (PRD Section 10) — no streaming/chunked upload in this phase.
 - No token-level streaming, no TTS, no playback in this phase — those are Phase 3.
+
+> **Post-implementation note (final whole-branch review, 2026-07-25):** The bullets above
+> originally specified the PRD's literal per-chunk "PyAudio → noisereduce → VAD gate → buffer"
+> ordering and a "512 or 1024-sample chunks" contract. Task 3 (`pipeline.py`) and Task 5
+> (`vad.py`) were implemented faithfully against that text and all unit tests (which use fakes at
+> the noisereduce/VAD boundary) passed. The defect was only caught when the final review ran the
+> real composed pipeline end-to-end: real `noisereduce` cannot run per-chunk at any real chunk
+> size, and the real Silero model rejects any chunk size other than exactly 512 samples. This was
+> a plan defect, not an implementation error — the constraints above have been corrected to match
+> what the real libraries actually require, and `pipeline.py`/`vad.py` were updated to match.
 
 ## Known Environment Risks (read before dispatching Tasks 4 and 5)
 

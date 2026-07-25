@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from financial_voice_agent.audio.vad import SileroVadScorer
@@ -17,7 +18,8 @@ class _FakeModel:
 def test_score_returns_model_output_as_float():
     fake_model = _FakeModel(0.87)
     scorer = SileroVadScorer(model=fake_model)
-    pcm = np.array([0, 16384, -16384, 0], dtype=np.int16).tobytes()
+    samples = [0, 16384, -16384, 0] + [0] * 508
+    pcm = np.array(samples, dtype=np.int16).tobytes()
 
     result = scorer.score(pcm)
 
@@ -29,7 +31,7 @@ def test_score_calls_model_with_16000_sample_rate():
     fake_model = _FakeModel(0.1)
     scorer = SileroVadScorer(model=fake_model)
 
-    scorer.score(b"\x00\x00" * 160)
+    scorer.score(b"\x00\x00" * 512)
 
     assert fake_model.calls[0][1] == 16000
 
@@ -37,7 +39,8 @@ def test_score_calls_model_with_16000_sample_rate():
 def test_score_passes_float_tensor_derived_from_pcm():
     fake_model = _FakeModel(0.1)
     scorer = SileroVadScorer(model=fake_model)
-    pcm = np.array([0, 32767], dtype=np.int16).tobytes()
+    samples = [0, 32767] + [0] * 510
+    pcm = np.array(samples, dtype=np.int16).tobytes()
 
     scorer.score(pcm)
 
@@ -51,8 +54,18 @@ def test_injected_model_is_reused_across_calls_without_reloading():
     fake_model = _FakeModel(0.1)
     scorer = SileroVadScorer(model=fake_model)
 
-    scorer.score(b"\x00\x00" * 10)
-    scorer.score(b"\x00\x00" * 10)
+    scorer.score(b"\x00\x00" * 512)
+    scorer.score(b"\x00\x00" * 512)
 
     assert len(fake_model.calls) == 2
     assert scorer._model is fake_model
+
+
+def test_score_raises_clear_error_for_wrong_chunk_size():
+    fake_model = _FakeModel(0.1)
+    scorer = SileroVadScorer(model=fake_model)
+
+    with pytest.raises(ValueError, match="512"):
+        scorer.score(b"\x00\x00" * 100)
+
+    assert fake_model.calls == []

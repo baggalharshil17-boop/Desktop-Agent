@@ -4,8 +4,6 @@ import pytest
 
 from financial_voice_agent.audio.pipeline import AudioPipeline
 
-CHUNK_MS = 10.0  # 160 samples at 16000 Hz = 10ms per chunk
-
 
 def _chunk(sample: int = 0) -> bytes:
     return sample.to_bytes(2, "little", signed=True) * 160
@@ -100,9 +98,50 @@ async def test_speech_active_event_set_during_speech_and_cleared_after():
         queue, vad, silence_duration_ms=15.0, min_speech_duration_ms=15.0, apply_noise_reduction=False
     )
 
-    states_during_run = []
     gen = pipeline.run()
     async for _utterance in gen:
         pass
     # After the generator is exhausted, speech has finalized and the event must be clear.
     assert not pipeline.speech_active.is_set()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_applies_real_noise_reduction_to_finalized_utterance():
+    import numpy as np
+
+    from financial_voice_agent.audio import dsp
+
+    queue = asyncio.Queue()
+    sample_rate = 16000
+    chunk_samples = 512  # production AudioCapture default
+    num_speech_chunks = 20  # ~640ms of "speech" -- long enough for a real utterance
+
+    rng = np.random.default_rng(7)
+    speech_chunks = [
+        dsp.float32_to_pcm((0.3 * rng.standard_normal(chunk_samples)).astype(np.float32))
+        for _ in range(num_speech_chunks)
+    ]
+    silence_chunks = [b"\x00\x00" * chunk_samples] * 5
+
+    vad = _ScriptedVad([0.9] * num_speech_chunks + [0.1] * 5)
+    for c in speech_chunks + silence_chunks:
+        await queue.put(c)
+    await queue.put(None)
+
+    pipeline = AudioPipeline(
+        queue,
+        vad,
+        sample_rate=sample_rate,
+        silence_duration_ms=1.0,
+        min_speech_duration_ms=1.0,
+        apply_noise_reduction=True,  # exercises the real dsp.reduce_noise call -- this is the point
+    )
+
+    utterances = [u async for u in pipeline.run()]
+
+    # Must not raise (this is what broke before the fix -- real noisereduce's STFT
+    # window exceeds a single 512-sample chunk, so per-chunk denoising always raised
+    # ValueError: noverlap must be less than nperseg), and must return valid PCM.
+    assert len(utterances) == 1
+    assert isinstance(utterances[0], bytes)
+    assert len(utterances[0]) > 0
