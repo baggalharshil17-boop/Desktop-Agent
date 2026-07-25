@@ -5,6 +5,7 @@ groq
 pytest
 pytest-asyncio
 numpy
+pandas
 noisereduce
 torch
 silero-vad
