@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -25,6 +26,8 @@ def test_load_fixture_missing_file_raises(tmp_path):
 
 def test_repo_fixtures_are_valid_json():
     # Guards the checked-in fixtures used by mode="mock" at runtime.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    fixtures_dir = os.path.join(repo_root, "fixtures")
     for name in ("quote", "ohlc_history", "positions_holdings"):
-        result = load_fixture(name, fixtures_dir="fixtures")
+        result = load_fixture(name, fixtures_dir=fixtures_dir)
         assert isinstance(result, dict)

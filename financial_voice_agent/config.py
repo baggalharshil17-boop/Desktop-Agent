@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 import yaml
 from dotenv import dotenv_values
+
+_VALID_TTS_PROVIDERS = {"cartesia", "deepgram"}
+_PLACEHOLDER_RE = re.compile(r"^<.*>$")
 
 
 class ConfigError(Exception):
@@ -47,8 +51,11 @@ def _load_env(env_path: str) -> dict[str, str]:
 
 
 def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Config:
-    with open(config_path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise ConfigError(f"config file not found: {config_path}")
 
     env = _load_env(env_path)
 
@@ -56,28 +63,48 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
     if not groq_api_key:
         raise ConfigError("Missing required environment variable: GROQ_API_KEY")
 
-    tts_provider = raw["tts"]["provider"]
-    cartesia_api_key = env.get("CARTESIA_API_KEY")
-    deepgram_api_key = env.get("DEEPGRAM_API_KEY")
-    if tts_provider == "cartesia" and not cartesia_api_key:
-        raise ConfigError("tts.provider is 'cartesia' but CARTESIA_API_KEY is not set")
-    if tts_provider == "deepgram" and not deepgram_api_key:
-        raise ConfigError("tts.provider is 'deepgram' but DEEPGRAM_API_KEY is not set")
+    try:
+        tts_provider = raw["tts"]["provider"]
 
-    return Config(
-        vad_speech_threshold=raw["vad"]["speech_threshold"],
-        vad_silence_duration_ms=raw["vad"]["silence_duration_ms"],
-        vad_min_speech_duration_ms=raw["vad"]["min_speech_duration_ms"],
-        audio_output_device_index=raw["audio"]["output_device_index"],
-        input_mode=raw["input_mode"],
-        tts_provider=tts_provider,
-        llm_model=raw["llm"]["model"],
-        storage_db_path=raw["storage"]["db_path"],
-        mode=raw["mode"],
-        groq_api_key=groq_api_key,
-        cartesia_api_key=cartesia_api_key,
-        deepgram_api_key=deepgram_api_key,
-        kite_api_key=env.get("KITE_API_KEY"),
-        kite_access_token=env.get("KITE_ACCESS_TOKEN"),
-        tavily_api_key=env.get("TAVILY_API_KEY"),
-    )
+        if tts_provider not in _VALID_TTS_PROVIDERS:
+            raise ConfigError(
+                f"tts.provider must be 'cartesia' or 'deepgram', got {tts_provider!r}"
+            )
+
+        cartesia_api_key = env.get("CARTESIA_API_KEY")
+        deepgram_api_key = env.get("DEEPGRAM_API_KEY")
+        if tts_provider == "cartesia" and not cartesia_api_key:
+            raise ConfigError("tts.provider is 'cartesia' but CARTESIA_API_KEY is not set")
+        if tts_provider == "deepgram" and not deepgram_api_key:
+            raise ConfigError("tts.provider is 'deepgram' but DEEPGRAM_API_KEY is not set")
+
+        llm_model = raw["llm"]["model"]
+        if _PLACEHOLDER_RE.match(llm_model):
+            raise ConfigError(
+                f"llm.model in config.yaml is still a placeholder ({llm_model!r}) — "
+                "set it to a real Groq model id from console.groq.com/docs/models"
+            )
+
+        config = Config(
+            vad_speech_threshold=raw["vad"]["speech_threshold"],
+            vad_silence_duration_ms=raw["vad"]["silence_duration_ms"],
+            vad_min_speech_duration_ms=raw["vad"]["min_speech_duration_ms"],
+            audio_output_device_index=raw["audio"]["output_device_index"],
+            input_mode=raw["input_mode"],
+            tts_provider=tts_provider,
+            llm_model=llm_model,
+            storage_db_path=raw["storage"]["db_path"],
+            mode=raw["mode"],
+            groq_api_key=groq_api_key,
+            cartesia_api_key=cartesia_api_key,
+            deepgram_api_key=deepgram_api_key,
+            kite_api_key=env.get("KITE_API_KEY"),
+            kite_access_token=env.get("KITE_ACCESS_TOKEN"),
+            tavily_api_key=env.get("TAVILY_API_KEY"),
+        )
+    except ConfigError:
+        raise
+    except (KeyError, TypeError) as exc:
+        raise ConfigError(f"config.yaml is missing or malformed: {exc}") from exc
+
+    return config
