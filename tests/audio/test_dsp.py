@@ -59,15 +59,16 @@ def test_reduce_noise_processes_signal_without_crashing_and_modifies_it():
     noise = rng.normal(0, 0.05, size=clean_tone.shape).astype(np.float32)
     noisy = clean_tone + noise
     pcm_noisy = float32_to_pcm(noisy)
+    quantized_noisy = pcm_to_float32(pcm_noisy)  # isolate reduce_noise's effect from PCM quantization
 
     pcm_reduced = reduce_noise(pcm_noisy, sample_rate=sample_rate)
     reduced = pcm_to_float32(pcm_reduced)
 
     # reduce_noise must actually run the real noisereduce library end-to-end
-    # (not a passthrough) and return valid, correctly-shaped PCM. Asserting a
-    # specific quality improvement against a synthetic clip proved too fragile
-    # against real noisereduce version/parameter behavior (see task-2-report.md);
-    # this test verifies real, non-mocked processing occurs instead.
+    # (not a passthrough) and return valid, correctly-shaped PCM. Compare against
+    # the post-quantization signal (not the pre-quantization float array) so this
+    # assertion isolates reduce_noise's real effect from PCM round-trip rounding —
+    # a passthrough or a dropped stationary=True must not slip through as "changed."
     assert len(reduced) == len(noisy)
-    assert not np.array_equal(reduced, noisy)
+    assert not np.array_equal(reduced, quantized_noisy)
     assert np.all(np.isfinite(reduced))
