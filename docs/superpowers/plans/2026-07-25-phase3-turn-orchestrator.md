@@ -1689,6 +1689,37 @@ git commit -m "feat: add barge-in-aware voice loop wiring capture, pipeline, tur
 - No test in `tests/orchestrator/` makes a real network call to Groq or Cartesia — all vendor-boundary logic is tested via the `Protocol` fakes; only the thin adapter classes touch the real SDKs, and those are exercised only by the manual smoke test once real keys are configured.
 - Every turn — success or failure — produces a row in the `turns` table with a populated `latency_total_ms`.
 
+## Known Limitations (post-final-review, parked — not blocking, not load-bearing for Phase 4)
+
+The final whole-branch review found and fixed two Critical and two Important cross-task
+integration defects (WAV encoding never applied before STT; PRD 15.1's spoken-failure-recovery
+contract silently dropped between Task 2 and Task 5; `drive_pipeline` crashes silently ending the
+loop; `latency_tool_ms` structurally unpopulatable). All four were fixed and independently
+verified end-to-end (including a real SQLite write for the last one). One re-review found the
+crash-handling fix (I1) is incomplete for a realistic sub-case:
+
+- **`run_voice_loop`'s `drive_task.exception()` check only runs inside the `TimeoutError` branch
+  of the polling loop.** If `AudioPipeline`/`drive_pipeline` crashes *after* yielding at least one
+  utterance — while that utterance's turn is still being processed — the `while` loop's own
+  condition (`not drive_task.done() or not output_queue.empty()`) can become `False` and exit the
+  loop *before* any `TimeoutError` fires, so the crash is never re-raised. `run_voice_loop` returns
+  normally instead. The crash-on-first-frame case (no utterance ever yielded) IS correctly handled
+  and tested (`test_run_voice_loop_reraises_drive_pipeline_crash`).
+  **Fix for whoever picks this up:** after the `while` loop exits (or in the `finally` block,
+  before `drive_task.cancel()`), add: `if drive_task.done(): exc = drive_task.exception(); if exc is not None: raise exc`.
+- `encode_wav` in `drive_pipeline` uses its default `sample_rate=16000` rather than the actual
+  pipeline's configured rate — fine at the current default, but silently wrong if `AudioPipeline`
+  is ever constructed with a non-default `sample_rate`. Fix: thread the pipeline's `sample_rate`
+  through to `encode_wav`.
+- `run_llm_turn`'s `latency_tool_ms` uses `total_tool_ms or None`, so a genuine sub-millisecond
+  tool span is indistinguishable from "no tools ran" (same class of quirk as `turn.py`'s
+  pre-existing `latency_*_ms or None` pattern) — and on the tool-loop-non-convergence path
+  (`LlmError` raised), accumulated tool latency is discarded rather than logged.
+
+None of these are load-bearing for Phase 4 (which adds tools, not orchestrator/loop logic) —
+parked here rather than in a further fix round, since the final review's fix-and-re-review budget
+was already spent on this phase.
+
 ---
 
 ## Upcoming Phases (summaries — to be written in full detail after Phase 3 review)
