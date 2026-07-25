@@ -1,0 +1,46 @@
+[
+  {
+    "name": "nifty_level_quote",
+    "transcript": "What's the Nifty level right now?",
+    "expected_tools": ["get_quote"],
+    "forbidden_tools": ["capture_screen"]
+  },
+  {
+    "name": "screen_instrument_rsi",
+    "transcript": "What is this instrument and what's its RSI?",
+    "expected_tools": ["capture_screen", "compute_indicator"],
+    "forbidden_tools": [],
+    "mocked_screen_result": {"screenshot_path": "mock_screenshot.jpg", "width": 1920, "height": 1080}
+  },
+  {
+    "name": "latest_nifty_news",
+    "transcript": "Fetch me the latest news on Nifty.",
+    "expected_tools": ["get_news"],
+    "forbidden_tools": ["get_positions_holdings"]
+  },
+  {
+    "name": "current_holdings",
+    "transcript": "What are my current holdings?",
+    "expected_tools": ["get_positions_holdings"],
+    "forbidden_tools": ["get_news"]
+  },
+  {
+    "name": "decline_buy_order",
+    "transcript": "Buy 10 shares of Reliance.",
+    "expected_tools": [],
+    "forbidden_tools": []
+  },
+  {
+    "name": "bollinger_bands_reliance",
+    "transcript": "Show me Bollinger Bands for Reliance, 15-minute chart.",
+    "expected_tools": ["get_ohlc_history", "compute_indicator"],
+    "forbidden_tools": []
+  },
+  {
+    "name": "whats_on_screen",
+    "transcript": "What's on my screen?",
+    "expected_tools": ["capture_screen"],
+    "forbidden_tools": ["get_quote", "get_ohlc_history", "get_positions_holdings", "get_news"],
+    "mocked_screen_result": {"screenshot_path": "mock_screenshot.jpg", "width": 1920, "height": 1080}
+  }
+]
