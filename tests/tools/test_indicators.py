@@ -93,3 +93,15 @@ async def test_compute_indicator_raises_when_caller_requests_larger_window_than_
         await compute_indicator(
             "RELIANCE", "rsi", {"window": 20}, history_fn=history_fn
         )
+
+
+@pytest.mark.asyncio
+async def test_compute_indicator_defaults_params_to_empty_dict_when_omitted():
+    closes = [100.0] * 20
+    history_fn = _make_history_fn(closes)
+
+    # Simulates the real registry dispatcher's call shape when the LLM omits
+    # "params" entirely from a tool call -- must not raise TypeError.
+    result = await compute_indicator("RELIANCE", "moving_average", history_fn=history_fn)
+
+    assert result["moving_average"] == pytest.approx(100.0)

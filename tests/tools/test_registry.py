@@ -69,3 +69,18 @@ async def test_executor_raises_value_error_for_unknown_tool():
 
     with pytest.raises(ValueError, match="unknown_tool"):
         await executor(ToolCall(id="1", name="unknown_tool", arguments={}))
+
+
+@pytest.mark.asyncio
+async def test_executor_dispatches_compute_indicator_without_params_key():
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    # Must not raise TypeError even though "params" is entirely absent from
+    # arguments -- fixtures/ohlc_history.json has only 2 candles, so this
+    # still raises InsufficientDataError (expected), NOT a TypeError about a
+    # missing "params" argument.
+    with pytest.raises(Exception) as exc_info:
+        await executor(
+            ToolCall(id="1", name="compute_indicator", arguments={"symbol": "RELIANCE", "indicator": "moving_average"})
+        )
+    assert "TypeError" not in type(exc_info.value).__name__

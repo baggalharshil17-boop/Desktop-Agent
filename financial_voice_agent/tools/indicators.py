@@ -22,8 +22,9 @@ def _required_candles(indicator: str, params: dict) -> int:
 
 
 async def compute_indicator(
-    symbol: str, indicator: str, params: dict, *, history_fn: HistoryFn
+    symbol: str, indicator: str, params: dict | None = None, *, history_fn: HistoryFn
 ) -> dict:
+    params = params or {}
     if indicator not in INDICATOR_MIN_CANDLES:
         raise ValueError(f"Unknown indicator: {indicator}")
 
