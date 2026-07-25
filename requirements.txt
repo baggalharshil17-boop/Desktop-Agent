@@ -12,3 +12,5 @@ silero-vad
 pyaudio
 janus
 cartesia
+mss
+pygetwindow
