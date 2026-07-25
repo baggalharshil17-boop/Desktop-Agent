@@ -10,7 +10,8 @@
     "transcript": "What is this instrument and what's its RSI?",
     "expected_tools": ["capture_screen", "compute_indicator"],
     "forbidden_tools": [],
-    "mocked_screen_result": {"screenshot_path": "mock_screenshot.jpg", "width": 1920, "height": 1080}
+    "mocked_screen_result": {"screenshot_path": "mock_screenshot.jpg", "width": 1920, "height": 1080},
+    "skip_reason": "capture_screen's result is a file path only -- vision attachment into the LLM's messages is not yet wired (see Phase 4's final-review known limitations), so the model has no way to determine which instrument is on screen without inventing a symbol name. Re-enable once vision wiring exists."
   },
   {
     "name": "latest_nifty_news",

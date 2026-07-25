@@ -128,7 +128,8 @@ async def _dispatch(call: ToolCall, config, http_clients) -> dict:
         )
     if call.name == "get_news":
         return await get_news(
-            **call.arguments, http_client=http_clients.tavily, api_key=config.tavily_api_key
+            **call.arguments, http_client=http_clients.tavily, api_key=config.tavily_api_key,
+            mode=config.mode, fixtures_dir=_FIXTURES_DIR,
         )
     if call.name == "capture_screen":
         return await capture_screen(window_finder=find_kite_window, screenshot_fn=capture_region)

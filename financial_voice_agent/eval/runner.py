@@ -14,21 +14,45 @@ class EvalResult:
     missing_tools: list[str]
     unexpected_forbidden_tools: list[str]
     error: str | None = None
+    skipped: bool = False
+    note: str | None = None
 
 
 def _wrap_tool_executor(base_tool_executor, mocked_screen_result: dict | None, recorded_calls: list[str]):
     async def executor(call: ToolCall) -> dict:
         recorded_calls.append(call.name)
-        if call.name == "capture_screen" and mocked_screen_result is not None:
-            return mocked_screen_result
+        if call.name == "capture_screen":
+            if mocked_screen_result is not None:
+                return mocked_screen_result
+            raise RuntimeError(
+                "capture_screen was called but this eval case has no mocked_screen_result -- "
+                "add one rather than letting the eval run touch real screen/window hardware."
+            )
         return await base_tool_executor(call)
 
     return executor
 
 
 async def run_eval_case(
-    case: EvalCase, *, llm_client, base_tool_executor, model: str, tools_schema: list[dict]
+    case: EvalCase,
+    *,
+    llm_client,
+    base_tool_executor,
+    model: str,
+    tools_schema: list[dict],
+    system_prompt: str | None = None,
 ) -> EvalResult:
+    if case.skip_reason is not None:
+        return EvalResult(
+            case_name=case.name,
+            passed=True,
+            actual_tools=[],
+            missing_tools=[],
+            unexpected_forbidden_tools=[],
+            skipped=True,
+            note=case.skip_reason,
+        )
+
     recorded_calls: list[str] = []
     wrapped_executor = _wrap_tool_executor(base_tool_executor, case.mocked_screen_result, recorded_calls)
 
@@ -41,6 +65,7 @@ async def run_eval_case(
             model=model,
             tools_schema=tools_schema,
             tool_executor=wrapped_executor,
+            system_prompt=system_prompt,
         )
     except Exception as exc:  # noqa: BLE001 -- one broken eval case must not crash the whole run
         error = str(exc)
@@ -65,13 +90,19 @@ async def run_eval_case(
         passed=passed,
         actual_tools=recorded_calls,
         missing_tools=missing,
-        unexpected_forbidden_tools=forbidden_hit + unexpected_when_none_expected,
+        unexpected_forbidden_tools=list(dict.fromkeys(forbidden_hit + unexpected_when_none_expected)),
         error=error,
     )
 
 
 async def run_eval_set(
-    cases: list[EvalCase], *, llm_client, base_tool_executor, model: str, tools_schema: list[dict]
+    cases: list[EvalCase],
+    *,
+    llm_client,
+    base_tool_executor,
+    model: str,
+    tools_schema: list[dict],
+    system_prompt: str | None = None,
 ) -> list[EvalResult]:
     results = []
     for case in cases:
@@ -81,6 +112,7 @@ async def run_eval_set(
             base_tool_executor=base_tool_executor,
             model=model,
             tools_schema=tools_schema,
+            system_prompt=system_prompt,
         )
         results.append(result)
     return results

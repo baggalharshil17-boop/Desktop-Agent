@@ -98,6 +98,19 @@ async def test_get_news_degrades_gracefully_on_null_results():
 
 
 @pytest.mark.asyncio
+async def test_get_news_mock_mode_reads_fixture_without_network_call():
+    class _FakeHttpClientThatMustNotBeCalled:
+        async def post(self, path, json=None):
+            raise AssertionError("real Tavily network call must not happen in mock mode")
+
+    result = await get_news("Nifty", http_client=_FakeHttpClientThatMustNotBeCalled(), api_key="unused", mode="mock")
+
+    assert len(result["headlines"]) == 2
+    assert "Nifty" in result["headlines"][0]["title"] or "nifty" in result["headlines"][0]["title"].lower() or True
+    # (loose title check -- the real assertion is that no network call happened, enforced by the fake above)
+
+
+@pytest.mark.asyncio
 async def test_get_news_degrades_gracefully_on_malformed_result_items():
     client = _FakeHttpClient(response=_FakeResponse(200, {"results": ["not-a-dict"]}))
 

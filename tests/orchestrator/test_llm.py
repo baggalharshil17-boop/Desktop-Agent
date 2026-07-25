@@ -264,3 +264,39 @@ async def test_run_llm_turn_populates_latency_tool_ms():
     )
 
     assert result.latency_tool_ms == 50
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_prepends_system_prompt_when_provided():
+    captured_messages = []
+
+    class _CapturingClient:
+        async def complete(self, messages, *, model, tools_schema):
+            captured_messages.append(list(messages))
+            return LlmCompletion(text="ok", tool_calls=[])
+
+    await run_llm_turn(
+        _CapturingClient(), "hello", [],
+        model="test-model", tools_schema=[], tool_executor=_tool_executor,
+        system_prompt="be a helpful read-only assistant",
+    )
+
+    assert captured_messages[0][0] == {"role": "system", "content": "be a helpful read-only assistant"}
+    assert captured_messages[0][-1] == {"role": "user", "content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_omits_system_message_when_not_provided():
+    captured_messages = []
+
+    class _CapturingClient:
+        async def complete(self, messages, *, model, tools_schema):
+            captured_messages.append(list(messages))
+            return LlmCompletion(text="ok", tool_calls=[])
+
+    await run_llm_turn(
+        _CapturingClient(), "hello", [],
+        model="test-model", tools_schema=[], tool_executor=_tool_executor,
+    )
+
+    assert all(m["role"] != "system" for m in captured_messages[0])

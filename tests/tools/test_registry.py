@@ -107,3 +107,20 @@ async def test_executor_translates_bad_arguments_to_error_dict():
     )
 
     assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_executor_dispatches_get_news_in_mock_mode_without_network():
+    class _HttpClientsWithFailingTavily:
+        kite = None
+        class tavily:
+            @staticmethod
+            async def post(path, json=None):
+                raise AssertionError("real Tavily call must not happen when config.mode == 'mock'")
+
+    executor = make_tool_executor(_FakeConfig(), _HttpClientsWithFailingTavily())
+
+    result = await executor(ToolCall(id="1", name="get_news", arguments={"query": "Nifty"}))
+
+    assert "error" not in result
+    assert len(result["headlines"]) == 2

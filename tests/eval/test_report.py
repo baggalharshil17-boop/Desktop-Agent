@@ -46,3 +46,19 @@ def test_format_report_omits_detail_lines_for_passing_cases():
     pass_line_index = next(i for i, line in enumerate(lines) if line == "[PASS] a")
     # No indented detail line follows a passing case.
     assert pass_line_index == len(lines) - 1 or not lines[pass_line_index + 1].startswith("    ")
+
+
+def test_format_report_shows_skipped_cases_separately_from_pass_fail_counts():
+    results = [
+        EvalResult(case_name="a", passed=True, actual_tools=["get_quote"], missing_tools=[], unexpected_forbidden_tools=[]),
+        EvalResult(
+            case_name="b", passed=True, actual_tools=[], missing_tools=[], unexpected_forbidden_tools=[],
+            skipped=True, note="vision not wired yet",
+        ),
+    ]
+
+    report = format_report(results)
+
+    assert "1/1 passed (1 skipped)" in report
+    assert "[SKIP] b" in report
+    assert "vision not wired yet" in report

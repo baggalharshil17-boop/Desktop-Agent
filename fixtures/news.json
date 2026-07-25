@@ -1,0 +1,14 @@
+{
+  "headlines": [
+    {
+      "title": "Nifty hits new high amid strong FII inflows",
+      "summary": "Benchmark indices rallied for a fourth straight session as foreign institutional investors continued buying.",
+      "url": "https://example.com/news/nifty-high"
+    },
+    {
+      "title": "RBI holds repo rate steady",
+      "summary": "The Reserve Bank of India kept the repo rate unchanged at its latest monetary policy meeting.",
+      "url": "https://example.com/news/rbi-repo-rate"
+    }
+  ]
+}

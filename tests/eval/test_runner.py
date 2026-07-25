@@ -185,3 +185,64 @@ async def test_run_eval_set_runs_all_cases_independently():
     assert results[0].passed is True
     assert results[1].case_name == "b"
     assert results[1].passed is True
+
+
+@pytest.mark.asyncio
+async def test_run_eval_case_short_circuits_skipped_case_without_calling_llm():
+    case = EvalCase(
+        name="skipped_case", transcript="whatever", expected_tools=["get_quote"],
+        forbidden_tools=[], skip_reason="vision not wired yet",
+    )
+
+    class _ClientThatMustNotBeCalled:
+        async def complete(self, messages, *, model, tools_schema):
+            raise AssertionError("skipped case must not call the LLM at all")
+
+    result = await run_eval_case(
+        case, llm_client=_ClientThatMustNotBeCalled(), base_tool_executor=_fake_tool_executor,
+        model="test-model", tools_schema=[],
+    )
+
+    assert result.skipped is True
+    assert result.passed is True
+    assert result.note == "vision not wired yet"
+
+
+@pytest.mark.asyncio
+async def test_run_eval_case_raises_clear_error_when_capture_screen_has_no_mock():
+    case = EvalCase(
+        name="unmocked_screen_case", transcript="what's on my screen?",
+        expected_tools=["capture_screen"], forbidden_tools=[], mocked_screen_result=None,
+    )
+
+    async def base_executor_that_would_touch_real_hardware(call: ToolCall) -> dict:
+        raise AssertionError("must never reach the real capture_screen adapter")
+
+    client = _ScriptedLlmClient([[ToolCall(id="1", name="capture_screen", arguments={})]])
+
+    result = await run_eval_case(
+        case, llm_client=client, base_tool_executor=base_executor_that_would_touch_real_hardware,
+        model="test-model", tools_schema=[],
+    )
+
+    assert result.passed is False
+    assert result.error is not None
+
+
+@pytest.mark.asyncio
+async def test_run_eval_case_passes_system_prompt_through_to_run_llm_turn():
+    captured = {}
+
+    class _CapturingClient:
+        async def complete(self, messages, *, model, tools_schema):
+            captured["messages"] = list(messages)
+            return LlmCompletion(text="done", tool_calls=[])
+
+    case = EvalCase(name="c", transcript="hello", expected_tools=[], forbidden_tools=[])
+
+    await run_eval_case(
+        case, llm_client=_CapturingClient(), base_tool_executor=_fake_tool_executor,
+        model="test-model", tools_schema=[], system_prompt="be helpful",
+    )
+
+    assert captured["messages"][0] == {"role": "system", "content": "be helpful"}

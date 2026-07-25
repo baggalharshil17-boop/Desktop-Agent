@@ -50,11 +50,15 @@ async def run_llm_turn(
     model: str,
     tools_schema: list[dict],
     tool_executor: ToolExecutor,
+    system_prompt: str | None = None,
     max_tool_rounds: int = 3,
     sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
     clock_fn: Callable[[], float] = time.monotonic,
 ) -> LlmTurnResult:
-    messages = [*history, {"role": "user", "content": transcript}]
+    messages = list(history)
+    if system_prompt is not None:
+        messages = [{"role": "system", "content": system_prompt}, *messages]
+    messages.append({"role": "user", "content": transcript})
     all_tool_calls: list[dict] = []
     all_tool_results: list[dict] = []
     total_tool_ms = 0

@@ -11,6 +11,7 @@ class EvalCase:
     expected_tools: list[str]
     forbidden_tools: list[str]
     mocked_screen_result: dict | None = None
+    skip_reason: str | None = None
 
 
 def load_eval_cases(path: str) -> list[EvalCase]:
@@ -23,6 +24,7 @@ def load_eval_cases(path: str) -> list[EvalCase]:
             expected_tools=c.get("expected_tools", []),
             forbidden_tools=c.get("forbidden_tools", []),
             mocked_screen_result=c.get("mocked_screen_result"),
+            skip_reason=c.get("skip_reason"),
         )
         for c in raw_cases
     ]

@@ -1,3 +1,5 @@
+import os
+
 from financial_voice_agent.eval.cases import EvalCase, load_eval_cases
 
 
@@ -40,7 +42,9 @@ def test_load_eval_cases_defaults_missing_optional_fields(tmp_path):
 def test_repo_eval_cases_file_is_valid_and_loadable():
     # Guards the checked-in starting cases (PRD Section 17.2) used by the
     # manual eval run.
-    cases = load_eval_cases("eval/cases.json")
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    cases_path = os.path.join(repo_root, "eval", "cases.json")
+    cases = load_eval_cases(cases_path)
 
     assert len(cases) == 7
     names = {c.name for c in cases}
@@ -53,3 +57,20 @@ def test_repo_eval_cases_file_is_valid_and_loadable():
         "bollinger_bands_reliance",
         "whats_on_screen",
     }
+
+
+def test_load_eval_cases_supports_skip_reason(tmp_path):
+    cases_file = tmp_path / "cases.json"
+    cases_file.write_text(
+        '[{"name": "t4", "transcript": "x", "skip_reason": "not ready yet"}]'
+    )
+
+    cases = load_eval_cases(str(cases_file))
+
+    assert cases[0].skip_reason == "not ready yet"
+
+
+def test_repo_screen_instrument_rsi_case_is_marked_skipped():
+    cases = load_eval_cases("eval/cases.json")
+    case = next(c for c in cases if c.name == "screen_instrument_rsi")
+    assert case.skip_reason is not None

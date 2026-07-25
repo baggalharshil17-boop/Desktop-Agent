@@ -1,7 +1,21 @@
 from __future__ import annotations
 
+from financial_voice_agent import mock
 
-async def get_news(query: str, *, http_client, api_key: str, max_results: int = 5) -> dict:
+
+async def get_news(
+    query: str,
+    *,
+    http_client,
+    api_key: str,
+    max_results: int = 5,
+    mode: str = "live",
+    fixtures_dir: str = "fixtures",
+) -> dict:
+    if mode == "mock":
+        data = mock.load_fixture("news", fixtures_dir=fixtures_dir)
+        return {"headlines": data.get("headlines", [])[:max_results]}
+
     try:
         response = await http_client.post(
             "/search", json={"api_key": api_key, "query": query, "max_results": max_results}
