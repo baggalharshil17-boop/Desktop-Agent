@@ -1,0 +1,19 @@
+vad:
+  speech_threshold: 0.5
+  silence_duration_ms: 600
+  min_speech_duration_ms: 200
+
+audio:
+  output_device_index: null  # null = OS default
+
+input_mode: "always_on"  # or "ptt"
+tts:
+  provider: "cartesia"  # or "deepgram"
+
+llm:
+  model: "<check console.groq.com/docs/models>"  # treat as config, not constant
+
+storage:
+  db_path: "./agent_turns.db"
+
+mode: "live"  # or "mock"

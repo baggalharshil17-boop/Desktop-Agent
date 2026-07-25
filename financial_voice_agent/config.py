@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+import yaml
+from dotenv import dotenv_values
+
+
+class ConfigError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Config:
+    vad_speech_threshold: float
+    vad_silence_duration_ms: int
+    vad_min_speech_duration_ms: int
+    audio_output_device_index: int | None
+    input_mode: str
+    tts_provider: str
+    llm_model: str
+    storage_db_path: str
+    mode: str
+    groq_api_key: str
+    cartesia_api_key: str | None
+    deepgram_api_key: str | None
+    kite_api_key: str | None
+    kite_access_token: str | None
+    tavily_api_key: str | None
+
+
+def _load_env(env_path: str) -> dict[str, str]:
+    file_values = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    merged = dict(file_values)
+    for key in (
+        "GROQ_API_KEY",
+        "CARTESIA_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "KITE_API_KEY",
+        "KITE_ACCESS_TOKEN",
+        "TAVILY_API_KEY",
+    ):
+        if key in os.environ:
+            merged[key] = os.environ[key]
+    return merged
+
+
+def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Config:
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+
+    env = _load_env(env_path)
+
+    groq_api_key = env.get("GROQ_API_KEY")
+    if not groq_api_key:
+        raise ConfigError("Missing required environment variable: GROQ_API_KEY")
+
+    tts_provider = raw["tts"]["provider"]
+    cartesia_api_key = env.get("CARTESIA_API_KEY")
+    deepgram_api_key = env.get("DEEPGRAM_API_KEY")
+    if tts_provider == "cartesia" and not cartesia_api_key:
+        raise ConfigError("tts.provider is 'cartesia' but CARTESIA_API_KEY is not set")
+    if tts_provider == "deepgram" and not deepgram_api_key:
+        raise ConfigError("tts.provider is 'deepgram' but DEEPGRAM_API_KEY is not set")
+
+    return Config(
+        vad_speech_threshold=raw["vad"]["speech_threshold"],
+        vad_silence_duration_ms=raw["vad"]["silence_duration_ms"],
+        vad_min_speech_duration_ms=raw["vad"]["min_speech_duration_ms"],
+        audio_output_device_index=raw["audio"]["output_device_index"],
+        input_mode=raw["input_mode"],
+        tts_provider=tts_provider,
+        llm_model=raw["llm"]["model"],
+        storage_db_path=raw["storage"]["db_path"],
+        mode=raw["mode"],
+        groq_api_key=groq_api_key,
+        cartesia_api_key=cartesia_api_key,
+        deepgram_api_key=deepgram_api_key,
+        kite_api_key=env.get("KITE_API_KEY"),
+        kite_access_token=env.get("KITE_ACCESS_TOKEN"),
+        tavily_api_key=env.get("TAVILY_API_KEY"),
+    )
