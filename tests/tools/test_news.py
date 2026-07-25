@@ -85,3 +85,23 @@ async def test_get_news_respects_max_results():
     result = await get_news("Nifty", http_client=client, api_key="test-key", max_results=3)
 
     assert len(result["headlines"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_news_degrades_gracefully_on_null_results():
+    client = _FakeHttpClient(response=_FakeResponse(200, {"results": None}))
+
+    result = await get_news("Nifty", http_client=client, api_key="test-key")
+
+    assert result["headlines"] == []
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_get_news_degrades_gracefully_on_malformed_result_items():
+    client = _FakeHttpClient(response=_FakeResponse(200, {"results": ["not-a-dict"]}))
+
+    result = await get_news("Nifty", http_client=client, api_key="test-key")
+
+    assert result["headlines"] == []
+    assert "error" in result

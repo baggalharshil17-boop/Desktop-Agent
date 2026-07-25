@@ -8,13 +8,12 @@ async def get_news(query: str, *, http_client, api_key: str, max_results: int = 
         )
         response.raise_for_status()
         data = response.json()
-    except Exception:  # noqa: BLE001 -- must degrade gracefully per PRD Section 6, never raise
-        return {"headlines": [], "error": "news search did not return results"}
-
-    results = data.get("results", [])
-    return {
-        "headlines": [
+        results = data.get("results", [])
+        headlines = [
             {"title": r.get("title"), "summary": r.get("content"), "url": r.get("url")}
             for r in results[:max_results]
         ]
-    }
+    except Exception:  # noqa: BLE001 -- must degrade gracefully per PRD Section 6, never raise
+        return {"headlines": [], "error": "news search did not return results"}
+
+    return {"headlines": headlines}
