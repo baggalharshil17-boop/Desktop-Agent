@@ -10,3 +10,4 @@ torch
 silero-vad
 pyaudio
 janus
+cartesia
