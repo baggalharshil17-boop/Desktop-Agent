@@ -34,8 +34,9 @@ async def run_turn(
     llm_fn: Callable[[str, list[dict]], Awaitable[LlmTurnResult]],
     tts_fn: Callable[[str], Awaitable[bytes]],
     db_path: str,
+    clock_fn: Callable[[], float] = time.monotonic,
 ) -> TurnResult:
-    turn_start = time.monotonic()
+    turn_start = clock_fn()
     transcript: str | None = None
     llm_result: LlmTurnResult | None = None
     tts_audio: bytes | None = None
@@ -45,21 +46,21 @@ async def run_turn(
     error: str | None = None
 
     try:
-        stt_start = time.monotonic()
+        stt_start = clock_fn()
         transcript = await stt_fn(utterance_wav)
-        latency_stt_ms = round((time.monotonic() - stt_start) * 1000)
+        latency_stt_ms = round((clock_fn() - stt_start) * 1000)
 
-        llm_start = time.monotonic()
+        llm_start = clock_fn()
         llm_result = await llm_fn(transcript, history)
-        latency_llm_ms = round((time.monotonic() - llm_start) * 1000)
+        latency_llm_ms = round((clock_fn() - llm_start) * 1000)
 
-        tts_start = time.monotonic()
+        tts_start = clock_fn()
         tts_audio = await tts_fn(llm_result.response_text)
-        latency_tts_ms = round((time.monotonic() - tts_start) * 1000)
+        latency_tts_ms = round((clock_fn() - tts_start) * 1000)
     except Exception as exc:  # noqa: BLE001 -- a turn must never crash the caller
         error = str(exc)
 
-    latency_total_ms = round((time.monotonic() - turn_start) * 1000)
+    latency_total_ms = round((clock_fn() - turn_start) * 1000)
 
     db.log_turn(
         db_path,

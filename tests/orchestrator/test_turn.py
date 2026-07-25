@@ -8,26 +8,19 @@ from financial_voice_agent.orchestrator.turn import LlmTurnResult, TurnResult, r
 
 def _fake_monotonic(values):
     it = iter(values)
-    def fn():
-        import inspect
-        stack = inspect.stack()
-        for frame_info in stack:
-            if 'run_turn' in frame_info.function:
-                return next(it)
-        return 0.0
-    return fn
+    return lambda: next(it)
 
 
 @pytest.mark.asyncio
-async def test_run_turn_computes_latencies_and_logs_success(tmp_path, monkeypatch):
+async def test_run_turn_computes_latencies_and_logs_success(tmp_path):
     db_path = str(tmp_path / "turns.db")
     init_db(db_path)
-    # 8 time.monotonic() calls: turn_start, stt_start, stt_end, llm_start,
-    # llm_end, tts_start, tts_end, total_end.
-    monkeypatch.setattr(
-        "financial_voice_agent.orchestrator.turn.time.monotonic",
-        _fake_monotonic([0.0, 0.0, 0.1, 0.1, 0.35, 0.35, 0.40, 0.60]),
-    )
+    # 8 clock_fn() calls: turn_start, stt_start, stt_end, llm_start,
+    # llm_end, tts_start, tts_end, total_end. Passed directly as an argument
+    # rather than monkeypatched onto the global `time` module -- patching
+    # `time.monotonic` process-wide also intercepts calls asyncio's own
+    # event loop makes internally, exhausting the fake iterator early.
+    clock_fn = _fake_monotonic([0.0, 0.0, 0.1, 0.1, 0.35, 0.35, 0.40, 0.60])
 
     async def stt_fn(wav_bytes):
         return "hello"
@@ -39,7 +32,7 @@ async def test_run_turn_computes_latencies_and_logs_success(tmp_path, monkeypatc
         return b"audio-bytes"
 
     result = await run_turn(
-        b"wav-bytes", [], stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+        b"wav-bytes", [], stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path, clock_fn=clock_fn
     )
 
     assert result == TurnResult(
