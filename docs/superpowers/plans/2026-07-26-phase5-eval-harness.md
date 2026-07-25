@@ -704,6 +704,29 @@ git commit -m "feat: add eval report formatting and manual real-Groq run entry p
 - No automated test in `tests/eval/` makes a real network call to Groq — all runner/report logic is tested via scripted fake `LlmClient`s.
 - Adding a new eval case (from a real usage session surfacing a bad tool call) requires only appending one object to `eval/cases.json` — no code change.
 
+## Post-Final-Review Fixes (applied, all independently verified by execution)
+
+The final whole-branch review found that **no system prompt existed anywhere in the project** — meaning the eval harness (and the assistant generally) could not be tested against, or made to enforce, PRD Section 4.1's read-only persona — plus several Important gaps only visible once the harness was composed with Phase 4's *real* tool registry rather than its own scripted fakes:
+
+1. **Added `financial_voice_agent/orchestrator/system_prompt.py`** (`SYSTEM_PROMPT`, PRD Section 4.1's exact draft text) and a `system_prompt: str | None = None` parameter to `run_llm_turn` (Phase 3), prepending a system message only when provided — backward-compatible, verified to produce byte-identical message construction for every existing caller that omits it. Threaded through `run_eval_case`/`run_eval_set` and the new `__main__.py`.
+2. **Gave `get_news` a `mode`/`fixtures_dir` mock path** matching its sibling Kite tools exactly (new `fixtures/news.json`), so eval runs never hit live Tavily — verified with an exploding fake Tavily client that never fired.
+3. **`capture_screen` now fails loudly instead of silently reaching real hardware** when an eval case has no `mocked_screen_result` — verified the real `find_kite_window`/`capture_region` adapters are never touched.
+4. **`screen_instrument_rsi` is now marked `skip_reason`** (a new `EvalCase` field) and short-circuits before ever calling the LLM — this case could previously only "pass" via the model hallucinating a symbol name, since vision attachment isn't wired (a pre-existing Phase 4 gap). `format_report` shows `[SKIP]` lines separately from the pass/fail count.
+5. **Shipped the `python -m financial_voice_agent.eval` entry point** that an earlier commit message had promised but never delivered — verified end-to-end (with `load_config`/the Groq client faked) that it wires the real tools registry, real `TOOLS_SCHEMA`, and `SYSTEM_PROMPT` correctly and produces a report.
+6. Deduped `unexpected_forbidden_tools` (`dict.fromkeys(...)`, order-preserving) and fixed one CWD-dependent test.
+
+**Independently re-verified end-to-end**: composing Phase 4's *real* `make_tool_executor` (mock mode) with all 7 real `eval/cases.json` cases and exploding fake Kite/Tavily clients (to prove no live call ever fires) produced `6/6 passed (1 skipped)`, with the skip never invoking the LLM at all.
+
+### Known Limitations (parked, not blocking, not load-bearing for future work)
+
+The fix-wave re-review found three new Minor issues in the fixes themselves — real, but no further fix round was spent on them per this project's one-fix-wave-per-final-review process:
+
+- **`tests/eval/test_cases.py`'s new `test_repo_screen_instrument_rsi_case_is_marked_skipped` test reintroduces the exact CWD-dependent `load_eval_cases("eval/cases.json")` pattern that a sibling test in the same file was just fixed to avoid.** Passes when pytest runs from the repo root (as it always has in this project), fails from any other CWD. **Fix for whoever picks this up:** resolve the path the same way the fixed test does (`os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`).
+- **`tests/tools/test_news.py`'s mock-mode test has a tautological assertion** (`assert ... or True`) that can never fail — dead weight, though the test's real guard (an exploding fake HTTP client) is sound and not affected. Delete the tautological line.
+- **`run_llm_turn`'s `system_prompt` check is `is not None` rather than truthy** — an explicitly passed empty string `""` would be treated as "provided" and inject an empty system message. Not reachable from any current caller (`SYSTEM_PROMPT` is always non-empty), purely theoretical.
+
+Also noted, not a code defect: **`SYSTEM_PROMPT` is currently wired only into the eval harness's `__main__.py`**, not into any real conversational entry point — `orchestrator/turn.py`'s injected `llm_fn` has no assembly point that passes a system prompt into a real production run yet. This is squarely the "wire the real `stt_fn`/`llm_fn`/`tts_fn` adapters" gap already noted in Phase 4's final review (I5), now with one more concrete thing (the system prompt itself) that adapter will need to carry.
+
 ---
 
 ## Project Status After Phase 5
