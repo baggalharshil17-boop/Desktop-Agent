@@ -203,3 +203,44 @@ async def test_real_groq_llm_client_calls_chat_completions_create():
     assert result.text is None
     assert result.tool_calls == [ToolCall(id="call_1", name="get_quote", arguments={"symbol": "NIFTY 50"})]
     assert completions.received_kwargs["model"] == "test-model"
+
+
+class _MessageCapturingClient:
+    def __init__(self):
+        self.round = 0
+        self.messages_seen = []
+
+    async def complete(self, messages, *, model, tools_schema):
+        self.messages_seen.append(list(messages))
+        self.round += 1
+        if self.round == 1:
+            return LlmCompletion(
+                text=None,
+                tool_calls=[ToolCall(id="call_1", name="get_quote", arguments={"symbol": "NIFTY 50"})],
+            )
+        return LlmCompletion(text="Nifty is at 24500.", tool_calls=[])
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_includes_assistant_tool_calls_message_before_tool_result():
+    client = _MessageCapturingClient()
+
+    await run_llm_turn(
+        client, "what's the nifty level", [],
+        model="test-model", tools_schema=[], tool_executor=_tool_executor,
+    )
+
+    # The second round's message history must include the assistant message
+    # carrying tool_calls, immediately followed by the matching tool-role
+    # response -- required by the real Groq/OpenAI-compatible chat
+    # completions contract (a "tool" message must follow an assistant
+    # message with matching tool_calls).
+    second_call_messages = client.messages_seen[1]
+    assistant_msg = next(
+        m for m in second_call_messages if m["role"] == "assistant" and m.get("tool_calls")
+    )
+    assert assistant_msg["tool_calls"][0]["id"] == "call_1"
+    assert assistant_msg["tool_calls"][0]["function"]["name"] == "get_quote"
+    tool_msg_index = second_call_messages.index(assistant_msg) + 1
+    assert second_call_messages[tool_msg_index]["role"] == "tool"
+    assert second_call_messages[tool_msg_index]["tool_call_id"] == "call_1"
