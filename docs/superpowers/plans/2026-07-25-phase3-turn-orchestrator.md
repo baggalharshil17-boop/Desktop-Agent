@@ -973,6 +973,26 @@ async def run_llm_turn(
                 tool_results_json=json.dumps(all_tool_results) if all_tool_results else None,
             )
 
+        # The real Groq/OpenAI-compatible chat completions API requires a
+        # "tool" message to be immediately preceded by an assistant message
+        # carrying the matching tool_calls -- omitting this (as an earlier
+        # draft of this plan did) works against every fake test double but
+        # is rejected by the real API on any second tool-calling round.
+        messages.append(
+            {
+                "role": "assistant",
+                "content": completion.text,
+                "tool_calls": [
+                    {
+                        "id": call.id,
+                        "type": "function",
+                        "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                    }
+                    for call in completion.tool_calls
+                ],
+            }
+        )
+
         results = await asyncio.gather(*(tool_executor(call) for call in completion.tool_calls))
         for call, result in zip(completion.tool_calls, results):
             all_tool_calls.append({"tool": call.name, "args": call.arguments})
