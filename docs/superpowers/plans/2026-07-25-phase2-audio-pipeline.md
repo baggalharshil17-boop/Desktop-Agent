@@ -8,6 +8,34 @@
 
 **Tech Stack:** Python 3.11+, pyaudio, janus, noisereduce, numpy, torch + silero-vad (or equivalent Silero VAD package), pytest, pytest-asyncio (already configured in Phase 1).
 
+> ## ⚠️ ENVIRONMENT STATUS (2026-07-25) — READ BEFORE RESUMING TASK 4
+>
+> **Task 4 (`financial_voice_agent/audio/capture.py`) is BLOCKED on this machine.** This dev
+> environment runs **Python 3.14.2**, which is too new for `pyaudio`:
+> - `pyaudio` 0.2.14 has no prebuilt wheel for `cp314` on PyPI — `pip install pyaudio` tries to
+>   build from source and fails with `Microsoft Visual C++ 14.0 or greater is required.`
+>   (Microsoft C++ Build Tools were not installed on this machine at the time.)
+> - The documented fallback, `pipwin install pyaudio`, also fails — `pipwin`'s transitive
+>   dependency `js2py` crashes on import (`RuntimeError: Your python version made changes to
+>   the bytecode`), because `js2py` inspects CPython bytecode internals in a way that doesn't
+>   hold on Python 3.14 (a very recent release neither library has been updated for).
+>
+> Full diagnostic detail is preserved in the Task 4 SDD report from the blocked attempt.
+>
+> **Resolution path chosen (2026-07-25):** install Microsoft C++ Build Tools ("Desktop
+> development with C++" workload) so `pyaudio` can build from source against Python 3.14, then
+> retry `pip install pyaudio` and resume Task 4 from its brief — no code changes are needed,
+> the brief's Steps 1–3 are unchanged and ready to execute once the import succeeds.
+>
+> **When pyaudio ships an official `cp314` wheel** (check `pip index versions pyaudio` or
+> PyPI's file list for the `pyaudio` project), the Build Tools install becomes unnecessary for
+> future machines — `pip install pyaudio` alone will work again. Update this note when that
+> happens; it is safe to delete this whole callout once Task 4 is unblocked and merged.
+>
+> **Task 5 (`torch` + `silero-vad`) has not yet been attempted on this Python version** —
+> verify it installs before assuming it's unaffected; torch's wheel support for very new
+> CPython releases tends to lag too.
+
 ## Global Constraints
 
 - Python 3.11+ only (per PRD Section 9).
