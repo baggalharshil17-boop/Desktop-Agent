@@ -33,14 +33,24 @@ class _FakePlayback:
 
 
 @pytest.mark.asyncio
-async def test_drive_pipeline_forwards_utterances_to_output_queue():
-    pipeline = _FakePipeline([b"utterance-1", b"utterance-2"])
+async def test_drive_pipeline_wraps_utterances_in_wav_and_forwards_to_output_queue():
+    pcm_one = b"\x00\x01" * 100
+    pcm_two = b"\x02\x03" * 100
+    pipeline = _FakePipeline([pcm_one, pcm_two])
     output_queue: asyncio.Queue = asyncio.Queue()
 
     await drive_pipeline(pipeline, output_queue)
 
-    assert output_queue.get_nowait() == b"utterance-1"
-    assert output_queue.get_nowait() == b"utterance-2"
+    first = output_queue.get_nowait()
+    second = output_queue.get_nowait()
+    assert first.startswith(b"RIFF")
+    assert second.startswith(b"RIFF")
+
+    import io
+    import wave
+
+    with wave.open(io.BytesIO(first), "rb") as wav_file:
+        assert wav_file.readframes(wav_file.getnframes()) == pcm_one
 
 
 @pytest.mark.asyncio
@@ -73,9 +83,11 @@ async def test_run_voice_loop_processes_multiple_utterances_in_order(tmp_path):
     pipeline = _FakePipeline([b"utterance-1", b"utterance-2"])
     playback = _FakePlayback()
     seen_transcripts: list[str] = []
+    call_count = [0]
 
     async def stt_fn(wav):
-        transcript = "first" if wav == b"utterance-1" else "second"
+        call_count[0] += 1
+        transcript = "first" if call_count[0] == 1 else "second"
         seen_transcripts.append(transcript)
         return transcript
 
@@ -152,3 +164,89 @@ async def test_run_voice_loop_stops_playback_mid_stream_when_speech_active_set_d
     # playback's interrupt_event WHILE playback was in progress, not before
     # it started.
     assert playback.play_calls[0] < 15
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_speaks_fallback_message_on_stt_failure(tmp_path):
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    pipeline = _FakePipeline([b"utterance-1"])
+    playback = _FakePlayback()
+
+    async def stt_fn(wav):
+        raise RuntimeError("groq is down")
+
+    async def llm_fn(transcript, history):
+        raise AssertionError("must not be called after stt_fn fails")
+
+    tts_calls: list[str] = []
+
+    async def tts_fn(text):
+        tts_calls.append(text)
+        return f"audio-for:{text}".encode()
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+    )
+
+    assert tts_calls == ["I didn't catch that, one moment"]
+    assert playback.play_calls == [b"audio-for:I didn't catch that, one moment"]
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_speaks_rate_limit_message_on_llm_rate_limit(tmp_path):
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    pipeline = _FakePipeline([b"utterance-1"])
+    playback = _FakePlayback()
+
+    async def stt_fn(wav):
+        return "hello"
+
+    async def llm_fn(transcript, history):
+        exc = RuntimeError("rate limited")
+        exc.rate_limited = True
+        raise exc
+
+    tts_calls: list[str] = []
+
+    async def tts_fn(text):
+        tts_calls.append(text)
+        return f"audio-for:{text}".encode()
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+    )
+
+    assert tts_calls == ["I've hit a usage limit — give me a second"]
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_reraises_drive_pipeline_crash(tmp_path):
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+
+    class _CrashingPipeline:
+        def __init__(self):
+            self.speech_active = asyncio.Event()
+
+        async def run(self):
+            raise RuntimeError("pipeline crashed")
+            yield  # pragma: no cover -- required to make this an async generator
+
+    pipeline = _CrashingPipeline()
+    playback = _FakePlayback()
+
+    async def stt_fn(wav):
+        return "x"
+
+    async def llm_fn(transcript, history):
+        return LlmTurnResult(response_text="y", tool_calls_json=None, tool_results_json=None)
+
+    async def tts_fn(text):
+        return b"z"
+
+    with pytest.raises(RuntimeError, match="pipeline crashed"):
+        await run_voice_loop(
+            pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+        )

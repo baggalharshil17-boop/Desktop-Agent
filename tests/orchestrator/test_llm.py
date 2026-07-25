@@ -244,3 +244,23 @@ async def test_run_llm_turn_includes_assistant_tool_calls_message_before_tool_re
     tool_msg_index = second_call_messages.index(assistant_msg) + 1
     assert second_call_messages[tool_msg_index]["role"] == "tool"
     assert second_call_messages[tool_msg_index]["tool_call_id"] == "call_1"
+
+
+def _fake_monotonic(values):
+    it = iter(values)
+    return lambda: next(it)
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_populates_latency_tool_ms():
+    # _OneRoundToolCallClient does exactly 1 round with tool calls (round 1),
+    # then round 2 has no tool calls -- so clock_fn is called exactly twice
+    # (tool_start, tool_end) across the whole run.
+    clock_fn = _fake_monotonic([0.0, 0.05])
+
+    result = await run_llm_turn(
+        _OneRoundToolCallClient(), "what's the nifty level", [],
+        model="test-model", tools_schema=[], tool_executor=_tool_executor, clock_fn=clock_fn,
+    )
+
+    assert result.latency_tool_ms == 50

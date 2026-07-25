@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol
 
@@ -51,10 +52,12 @@ async def run_llm_turn(
     tool_executor: ToolExecutor,
     max_tool_rounds: int = 3,
     sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    clock_fn: Callable[[], float] = time.monotonic,
 ) -> LlmTurnResult:
     messages = [*history, {"role": "user", "content": transcript}]
     all_tool_calls: list[dict] = []
     all_tool_results: list[dict] = []
+    total_tool_ms = 0
 
     for _round in range(max_tool_rounds):
         completion = await _complete_with_retry(
@@ -66,6 +69,7 @@ async def run_llm_turn(
                 response_text=completion.text or "",
                 tool_calls_json=json.dumps(all_tool_calls) if all_tool_calls else None,
                 tool_results_json=json.dumps(all_tool_results) if all_tool_results else None,
+                latency_tool_ms=total_tool_ms or None,
             )
 
         messages.append(
@@ -83,7 +87,9 @@ async def run_llm_turn(
             }
         )
 
+        tool_start = clock_fn()
         results = await asyncio.gather(*(tool_executor(call) for call in completion.tool_calls))
+        total_tool_ms += round((clock_fn() - tool_start) * 1000)
         for call, result in zip(completion.tool_calls, results):
             all_tool_calls.append({"tool": call.name, "args": call.arguments})
             all_tool_results.append(result)

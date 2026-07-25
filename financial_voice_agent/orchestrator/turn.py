@@ -12,6 +12,7 @@ class LlmTurnResult:
     response_text: str
     tool_calls_json: str | None
     tool_results_json: str | None
+    latency_tool_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,8 @@ class TurnResult:
     latency_tts_ms: int
     latency_total_ms: int
     error: str | None
+    latency_tool_ms: int | None = None
+    rate_limited: bool = False
 
 
 async def run_turn(
@@ -44,6 +47,7 @@ async def run_turn(
     latency_llm_ms = 0
     latency_tts_ms = 0
     error: str | None = None
+    rate_limited = False
 
     try:
         stt_start = clock_fn()
@@ -59,6 +63,7 @@ async def run_turn(
         latency_tts_ms = round((clock_fn() - tts_start) * 1000)
     except Exception as exc:  # noqa: BLE001 -- a turn must never crash the caller
         error = str(exc)
+        rate_limited = getattr(exc, "rate_limited", False)
 
     latency_total_ms = round((clock_fn() - turn_start) * 1000)
 
@@ -71,7 +76,7 @@ async def run_turn(
         screenshot_path=None,
         latency_stt_ms=latency_stt_ms or None,
         latency_llm_ms=latency_llm_ms or None,
-        latency_tool_ms=None,
+        latency_tool_ms=llm_result.latency_tool_ms if llm_result else None,
         latency_tts_ms=latency_tts_ms or None,
         latency_total_ms=latency_total_ms,
         error=error,
@@ -86,6 +91,8 @@ async def run_turn(
         latency_tts_ms=latency_tts_ms,
         latency_total_ms=latency_total_ms,
         error=error,
+        latency_tool_ms=llm_result.latency_tool_ms if llm_result else None,
+        rate_limited=rate_limited,
     )
 
 

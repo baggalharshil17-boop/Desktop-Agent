@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 
+from financial_voice_agent.audio.wav import encode_wav
 from financial_voice_agent.orchestrator.turn import run_turn, update_history
 
 
@@ -11,9 +12,15 @@ async def drive_pipeline(pipeline, output_queue: asyncio.Queue) -> None:
     output_queue. Must run as its own task, per AudioPipeline.speech_active's
     documented liveness contract (financial_voice_agent/audio/pipeline.py) --
     it must never be blocked waiting on turn processing, or speech_active
-    (and therefore barge-in) freezes."""
-    async for utterance_wav in pipeline.run():
-        await output_queue.put(utterance_wav)
+    (and therefore barge-in) freezes.
+
+    AudioPipeline.run() yields raw PCM bytes (no container), so this is the
+    one place that wraps each utterance in a WAV container before it's
+    handed to STT -- Groq's Whisper endpoint is a file upload, not a raw PCM
+    stream, and everything downstream refers to these bytes as
+    "utterance_wav"."""
+    async for utterance_pcm in pipeline.run():
+        await output_queue.put(encode_wav(utterance_pcm))
 
 
 async def _play_with_barge_in(
@@ -61,6 +68,10 @@ async def run_voice_loop(
             try:
                 utterance_wav = await asyncio.wait_for(output_queue.get(), timeout=0.1)
             except asyncio.TimeoutError:
+                if drive_task.done():
+                    exc = drive_task.exception()
+                    if exc is not None:
+                        raise exc
                 continue
 
             result = await run_turn(
@@ -72,7 +83,19 @@ async def run_voice_loop(
                     history, result.transcript, result.response_text, max_turns=max_turns_history
                 )
 
-            if result.tts_audio:
+            if result.error is not None:
+                message = (
+                    "I've hit a usage limit — give me a second"
+                    if result.rate_limited
+                    else "I didn't catch that, one moment"
+                )
+                try:
+                    fallback_audio = await tts_fn(message)
+                except Exception:  # noqa: BLE001 -- fallback TTS failing must not crash the loop
+                    fallback_audio = None
+                if fallback_audio:
+                    await _play_with_barge_in(playback, fallback_audio, pipeline)
+            elif result.tts_audio:
                 await _play_with_barge_in(playback, result.tts_audio, pipeline)
     finally:
         drive_task.cancel()
