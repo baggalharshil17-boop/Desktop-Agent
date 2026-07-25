@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 import functools
+import pathlib
 from typing import Awaitable, Callable
 
 from financial_voice_agent.orchestrator.llm import ToolCall
 from financial_voice_agent.tools.history import get_ohlc_history
-from financial_voice_agent.tools.indicators import compute_indicator
+from financial_voice_agent.tools.indicators import InsufficientDataError, compute_indicator
+from financial_voice_agent.tools.kite_client import (
+    KiteRateLimitedError,
+    KiteSessionExpiredError,
+    KiteUnavailableError,
+)
 from financial_voice_agent.tools.news import get_news
 from financial_voice_agent.tools.quotes import get_positions_holdings, get_quote
-from financial_voice_agent.tools.screen import capture_region, capture_screen, find_kite_window
+from financial_voice_agent.tools.screen import (
+    WindowNotFoundError,
+    capture_region,
+    capture_screen,
+    find_kite_window,
+)
+
+_FIXTURES_DIR = str(pathlib.Path(__file__).resolve().parent.parent.parent / "fixtures")
 
 TOOLS_SCHEMA = [
     {
@@ -57,7 +70,7 @@ TOOLS_SCHEMA = [
                     },
                     "params": {
                         "type": "object",
-                        "description": "Optional: window, interval, from, to",
+                        "description": "Optional: window, interval, from_date, to_date",
                     },
                 },
                 "required": ["symbol", "indicator"],
@@ -95,27 +108,48 @@ TOOLS_SCHEMA = [
 ]
 
 
+async def _dispatch(call: ToolCall, config, http_clients) -> dict:
+    if call.name == "get_quote":
+        return await get_quote(
+            **call.arguments, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
+        )
+    if call.name == "get_ohlc_history":
+        return await get_ohlc_history(
+            **call.arguments, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
+        )
+    if call.name == "compute_indicator":
+        history_fn = functools.partial(
+            get_ohlc_history, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
+        )
+        return await compute_indicator(**call.arguments, history_fn=history_fn)
+    if call.name == "get_positions_holdings":
+        return await get_positions_holdings(
+            http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
+        )
+    if call.name == "get_news":
+        return await get_news(
+            **call.arguments, http_client=http_clients.tavily, api_key=config.tavily_api_key
+        )
+    if call.name == "capture_screen":
+        return await capture_screen(window_finder=find_kite_window, screenshot_fn=capture_region)
+    raise ValueError(f"Unknown tool: {call.name}")
+
+
 def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[dict]]:
     async def executor(call: ToolCall) -> dict:
-        if call.name == "get_quote":
-            return await get_quote(**call.arguments, http_client=http_clients.kite, mode=config.mode)
-        if call.name == "get_ohlc_history":
-            return await get_ohlc_history(
-                **call.arguments, http_client=http_clients.kite, mode=config.mode
-            )
-        if call.name == "compute_indicator":
-            history_fn = functools.partial(
-                get_ohlc_history, http_client=http_clients.kite, mode=config.mode
-            )
-            return await compute_indicator(**call.arguments, history_fn=history_fn)
-        if call.name == "get_positions_holdings":
-            return await get_positions_holdings(http_client=http_clients.kite, mode=config.mode)
-        if call.name == "get_news":
-            return await get_news(
-                **call.arguments, http_client=http_clients.tavily, api_key=config.tavily_api_key
-            )
-        if call.name == "capture_screen":
-            return await capture_screen(window_finder=find_kite_window, screenshot_fn=capture_region)
-        raise ValueError(f"Unknown tool: {call.name}")
+        try:
+            return await _dispatch(call, config, http_clients)
+        except KiteSessionExpiredError:
+            return {"error": "Kite session expired, please log in again"}
+        except KiteRateLimitedError:
+            return {"error": "Kite Connect rate limit hit, please try again shortly"}
+        except KiteUnavailableError:
+            return {"error": "Kite Connect is temporarily unavailable"}
+        except InsufficientDataError as exc:
+            return {"error": str(exc)}
+        except WindowNotFoundError:
+            return {"error": "Could not find the Kite window on screen"}
+        except TypeError as exc:
+            return {"error": f"Invalid arguments for tool '{call.name}': {exc}"}
 
     return executor

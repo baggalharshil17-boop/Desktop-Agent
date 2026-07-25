@@ -11,7 +11,7 @@ async def test_get_ohlc_history_mock_mode_reads_fixture():
 
     assert result["symbol"] == "RELIANCE"
     assert result["interval"] == "15minute"
-    assert len(result["candles"]) == 2
+    assert len(result["candles"]) == 25
     assert result["candles"][0]["close"] == 2952.5
 
 

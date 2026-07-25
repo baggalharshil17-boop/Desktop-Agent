@@ -1,5 +1,5 @@
-import base64
 import io
+import os
 
 import pytest
 from PIL import Image
@@ -15,7 +15,7 @@ def _make_test_image_bytes(width: int = 10, height: int = 10) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_capture_screen_returns_base64_jpeg_when_window_found():
+async def test_capture_screen_writes_jpeg_to_disk_and_returns_path(tmp_path):
     def window_finder():
         return {"left": 0, "top": 0, "width": 10, "height": 10}
 
@@ -23,11 +23,16 @@ async def test_capture_screen_returns_base64_jpeg_when_window_found():
         assert region == {"left": 0, "top": 0, "width": 10, "height": 10}
         return _make_test_image_bytes()
 
-    result = await capture_screen(window_finder=window_finder, screenshot_fn=screenshot_fn)
+    screenshot_dir = str(tmp_path / "screenshots")
+    result = await capture_screen(
+        window_finder=window_finder, screenshot_fn=screenshot_fn, screenshot_dir=screenshot_dir
+    )
 
-    decoded = base64.b64decode(result["image_base64"])
-    image = Image.open(io.BytesIO(decoded))
-    assert image.format == "JPEG"
+    assert os.path.exists(result["screenshot_path"])
+    assert result["width"] == 10
+    assert result["height"] == 10
+    with Image.open(result["screenshot_path"]) as image:
+        assert image.format == "JPEG"
 
 
 @pytest.mark.asyncio

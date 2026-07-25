@@ -49,18 +49,16 @@ async def test_executor_dispatches_get_positions_holdings_in_mock_mode():
 async def test_executor_dispatches_compute_indicator_using_mock_history():
     executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
 
-    with pytest.raises(Exception):
-        # fixtures/ohlc_history.json only has 2 candles -- far short of any
-        # indicator's minimum, so this must raise InsufficientDataError,
-        # proving compute_indicator is correctly wired to real
-        # get_ohlc_history (mock mode) through the registry, not a stub.
-        await executor(
-            ToolCall(
-                id="1",
-                name="compute_indicator",
-                arguments={"symbol": "RELIANCE", "indicator": "moving_average", "params": {}},
-            )
+    result = await executor(
+        ToolCall(
+            id="1",
+            name="compute_indicator",
+            arguments={"symbol": "RELIANCE", "indicator": "moving_average", "params": {}},
         )
+    )
+
+    assert "moving_average" in result
+    assert "error" not in result
 
 
 @pytest.mark.asyncio
@@ -75,12 +73,37 @@ async def test_executor_raises_value_error_for_unknown_tool():
 async def test_executor_dispatches_compute_indicator_without_params_key():
     executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
 
-    # Must not raise TypeError even though "params" is entirely absent from
-    # arguments -- fixtures/ohlc_history.json has only 2 candles, so this
-    # still raises InsufficientDataError (expected), NOT a TypeError about a
-    # missing "params" argument.
-    with pytest.raises(Exception) as exc_info:
-        await executor(
-            ToolCall(id="1", name="compute_indicator", arguments={"symbol": "RELIANCE", "indicator": "moving_average"})
+    result = await executor(
+        ToolCall(id="1", name="compute_indicator", arguments={"symbol": "RELIANCE", "indicator": "moving_average"})
+    )
+
+    assert "moving_average" in result
+    assert "error" not in result
+
+
+@pytest.mark.asyncio
+async def test_executor_translates_insufficient_data_error_to_error_dict():
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    # The 25-candle fixture is not enough for a caller-requested window of 30.
+    result = await executor(
+        ToolCall(
+            id="1",
+            name="compute_indicator",
+            arguments={"symbol": "RELIANCE", "indicator": "moving_average", "params": {"window": 30}},
         )
-    assert "TypeError" not in type(exc_info.value).__name__
+    )
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_executor_translates_bad_arguments_to_error_dict():
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    # An extra/unexpected keyword argument from the LLM must not crash the tool loop.
+    result = await executor(
+        ToolCall(id="1", name="get_quote", arguments={"symbol": "NIFTY 50", "exchange": "NSE"})
+    )
+
+    assert "error" in result

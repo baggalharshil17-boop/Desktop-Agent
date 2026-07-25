@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import base64
+import os
+import time
 from typing import Callable
 
 
@@ -12,13 +13,18 @@ async def capture_screen(
     *,
     window_finder: Callable[[], dict | None],
     screenshot_fn: Callable[[dict], bytes],
-    jpeg_quality: int = 80,
+    screenshot_dir: str = "screenshots",
 ) -> dict:
     region = window_finder()
     if region is None:
         raise WindowNotFoundError("Kite window not found")
     jpeg_bytes = screenshot_fn(region)
-    return {"image_base64": base64.b64encode(jpeg_bytes).decode("ascii")}
+    os.makedirs(screenshot_dir, exist_ok=True)
+    filename = f"capture_{int(time.time() * 1000)}.jpg"
+    path = os.path.join(screenshot_dir, filename)
+    with open(path, "wb") as f:
+        f.write(jpeg_bytes)
+    return {"screenshot_path": path, "width": region.get("width"), "height": region.get("height")}
 
 
 def find_kite_window() -> dict | None:

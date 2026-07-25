@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 import pandas as pd
@@ -21,6 +22,19 @@ def _required_candles(indicator: str, params: dict) -> int:
     return INDICATOR_MIN_CANDLES[indicator]  # fibonacci has no window param
 
 
+def _default_date_range(min_candles: int, interval: str) -> tuple[str, str]:
+    """A sensible lookback window when the caller doesn't specify from_date/to_date --
+    Kite Connect rejects an empty/None date range in live mode, so compute_indicator
+    must never send one."""
+    to_date = datetime.now(timezone.utc)
+    if interval == "day":
+        days_back = min_candles + 5
+    else:
+        days_back = max(5, (min_candles // 25) + 3)
+    from_date = to_date - timedelta(days=days_back)
+    return from_date.date().isoformat(), to_date.date().isoformat()
+
+
 async def compute_indicator(
     symbol: str, indicator: str, params: dict | None = None, *, history_fn: HistoryFn
 ) -> dict:
@@ -28,14 +42,17 @@ async def compute_indicator(
     if indicator not in INDICATOR_MIN_CANDLES:
         raise ValueError(f"Unknown indicator: {indicator}")
 
+    interval = params.get("interval", "15minute")
+    min_required = max(INDICATOR_MIN_CANDLES[indicator], _required_candles(indicator, params))
+    default_from, default_to = _default_date_range(min_required, interval)
+
     history = await history_fn(
         symbol=symbol,
-        interval=params.get("interval", "15minute"),
-        from_date=params.get("from"),
-        to_date=params.get("to"),
+        interval=interval,
+        from_date=params.get("from_date", default_from),
+        to_date=params.get("to_date", default_to),
     )
     candles = history["candles"]
-    min_required = max(INDICATOR_MIN_CANDLES[indicator], _required_candles(indicator, params))
     if len(candles) < min_required:
         raise InsufficientDataError(
             f"{indicator} requires at least {min_required} candles, got {len(candles)}"
