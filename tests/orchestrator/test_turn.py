@@ -8,13 +8,13 @@ from financial_voice_agent.orchestrator.turn import LlmTurnResult, TurnResult, r
 
 def _fake_monotonic(values):
     it = iter(values)
-    last = [None]
     def fn():
-        try:
-            last[0] = next(it)
-            return last[0]
-        except StopIteration:
-            return last[0]
+        import inspect
+        stack = inspect.stack()
+        for frame_info in stack:
+            if 'run_turn' in frame_info.function:
+                return next(it)
+        return 0.0
     return fn
 
 
