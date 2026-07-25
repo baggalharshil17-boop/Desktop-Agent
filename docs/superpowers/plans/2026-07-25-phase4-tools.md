@@ -1257,6 +1257,26 @@ git commit -m "feat: wire all six tools into the LLM tool-calling loop"
 - No tool call in this phase's code reaches a Kite write/order endpoint (spot-check: grep for any HTTP method other than `GET` against `http_clients.kite`, and confirm none exists).
 - The real (live) adapters (`get_quote`/`get_ohlc_history`/`get_positions_holdings`'s Kite field-mapping, `find_kite_window`/`capture_region`) are flagged for build-time verification and are not blocking — they become relevant once you set up a Kite Connect subscription.
 
+## Post-Final-Review Fixes (applied, all independently verified by execution)
+
+The final whole-branch review found one Critical and four Important cross-tool integration defects, all fixed in one round:
+
+1. **`capture_screen` no longer returns a full base64 JPEG inline** (would have produced a ~500,000-character tool message and blown the LLM's context on every screen capture). It now writes the JPEG to disk and returns `{"screenshot_path": ..., "width": ..., "height": ...}`, matching `db.py`'s existing (still unwired — see below) `screenshot_path` column. The dead `jpeg_quality` parameter was removed from `capture_screen`'s signature.
+2. **`compute_indicator` now sends a real, non-`None` default date range** to `get_ohlc_history` when the caller doesn't specify one (`_default_date_range()`), and uses `from_date`/`to_date` param keys — matching `get_ohlc_history`'s own naming — instead of the inconsistent `from`/`to`.
+3. **`fixtures/ohlc_history.json` was expanded from 2 to 25 candles** (first candle's `open`/`close` unchanged at 2950.0/2952.5) so all four indicators, not just Fibonacci, actually compute successfully in `mode: "mock"`.
+4. **`make_tool_executor` now validates/translates failures instead of propagating them raw**: Kite's three exceptions, `InsufficientDataError`, `WindowNotFoundError`, and any argument-mismatch `TypeError` are all caught and returned as `{"error": ...}` dicts (an unknown tool/indicator name's `ValueError` still propagates uncaught, by design). `_FIXTURES_DIR` is now resolved via `pathlib.Path(__file__)`, not the process's CWD.
+5. Two registry tests that used `pytest.raises(Exception)` (too loose to guard their own fix) were rewritten to assert specific success/failure outcomes.
+
+### Known Limitations (parked, not blocking, not load-bearing for Phase 5)
+
+The fix-wave re-review found three new Minor issues in the fixes themselves — real, but no further fix round was spent on them per this project's one-fix-wave-per-final-review process:
+
+- **`capture_screen`'s dispatch in `registry.py` doesn't pass a `screenshot_dir`, so it falls back to the CWD-relative `"screenshots"` default** — the same class of bug Fix 4 above just closed for fixture loading, reintroduced on the write side. Running the app from any directory other than the repo root will write screenshots to a stray relative folder and return a path that won't resolve later. **Fix for whoever picks this up:** resolve a `_SCREENSHOTS_DIR` the same way `_FIXTURES_DIR` is resolved (`pathlib.Path(__file__).resolve().parent.parent.parent / "screenshots"`) and pass it as `screenshot_dir=` in the `capture_screen` dispatch branch.
+- **`make_tool_executor`'s `except TypeError` wraps the entire tool call, not just argument binding** — a genuine `TypeError` raised deep inside a tool (e.g. malformed data hitting a pandas operation) is currently mislabeled `"Invalid arguments for tool 'X'"` and swallowed as if it were a bad LLM argument, rather than surfacing as a real bug. Low priority for a personal prototype; revisit if this ever misleads debugging in practice.
+- **No retention/cleanup for screenshots** — every `capture_screen` call writes a new ~1-1.5MB JPEG that is never deleted. Fine for occasional manual testing; would need a cleanup policy before any sustained real usage.
+
+Also noted, not a code defect: **`orchestrator/turn.py` (Phase 3) still hardcodes `screenshot_path=None`** when logging a turn — Fix 1 above makes `capture_screen`'s return shape compatible with `db.py`'s `screenshot_path` column, but nothing wires the two together yet (that's a Phase 3/main-loop concern, not this phase's). And `_default_date_range` anchors "today" to UTC, which can lag the IST trading date by up to a day during IST evening hours in live mode — worth a fix when live Kite testing actually begins.
+
 ---
 
 ## Upcoming Phases (summaries — to be written in full detail after Phase 4 review)
