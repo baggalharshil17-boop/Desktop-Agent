@@ -1,6 +1,7 @@
 pyyaml
 python-dotenv
 httpx
+groq
 pytest
 pytest-asyncio
 numpy
