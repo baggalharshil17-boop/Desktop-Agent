@@ -8,33 +8,56 @@
 
 **Tech Stack:** Python 3.11+, pyaudio, janus, noisereduce, numpy, torch + silero-vad (or equivalent Silero VAD package), pytest, pytest-asyncio (already configured in Phase 1).
 
-> ## ⚠️ ENVIRONMENT STATUS (2026-07-25) — READ BEFORE RESUMING TASK 4
+> ## ⚠️ ENVIRONMENT STATUS (2026-07-25, resolved) — pyaudio install on Python 3.14
 >
-> **Task 4 (`financial_voice_agent/audio/capture.py`) is BLOCKED on this machine.** This dev
-> environment runs **Python 3.14.2**, which is too new for `pyaudio`:
-> - `pyaudio` 0.2.14 has no prebuilt wheel for `cp314` on PyPI — `pip install pyaudio` tries to
->   build from source and fails with `Microsoft Visual C++ 14.0 or greater is required.`
->   (Microsoft C++ Build Tools were not installed on this machine at the time.)
+> **Task 4 (`financial_voice_agent/audio/capture.py`) was BLOCKED, now unblocked.** This dev
+> environment runs **Python 3.14.2**, which is too new for `pyaudio`'s prebuilt wheels:
+> - `pyaudio` 0.2.14 has no prebuilt wheel for `cp314` on PyPI — plain `pip install pyaudio`
+>   tries to build from source and fails first with `Microsoft Visual C++ 14.0 or greater is
+>   required`, then (once a compiler is present) with `Cannot open include file: 'portaudio.h'`
+>   — the PortAudio C library itself isn't vendored anywhere pip can find it.
 > - The documented fallback, `pipwin install pyaudio`, also fails — `pipwin`'s transitive
->   dependency `js2py` crashes on import (`RuntimeError: Your python version made changes to
->   the bytecode`), because `js2py` inspects CPython bytecode internals in a way that doesn't
->   hold on Python 3.14 (a very recent release neither library has been updated for).
+>   dependency `js2py` crashes on import on Python 3.14 (bytecode-introspection assumptions
+>   that don't hold on this recent a release).
 >
-> Full diagnostic detail is preserved in the Task 4 SDD report from the blocked attempt.
+> **Resolution actually used (2026-07-25):**
+> 1. Installed Microsoft C++ Build Tools ("Desktop development with C++" workload) — resolves
+>    the compiler error.
+> 2. Installed [vcpkg](https://github.com/microsoft/vcpkg) at a **short path**
+>    (`C:\Users\dell\vcpkg`, not a deeply nested temp/scratchpad path — vcpkg's own build
+>    process hits Windows' 260-character path limit otherwise: `ninja: error: ... Filename
+>    longer than 260 characters`).
+> 3. Built PortAudio via vcpkg using the **static** triplet specifically — pyaudio's `setup.py`
+>    only supports static linking on Windows (see its own comments: "Only supports statically
+>    linking with portaudio... use MT flag to match... vcpkg's portaudio"):
+>    ```
+>    vcpkg install portaudio:x64-windows-static
+>    ```
+>    (the plain `portaudio:x64-windows` dynamic triplet builds fine but does NOT work — pyaudio
+>    will still fail with the missing-header error against it, since pyaudio's setup.py expects
+>    the static triplet's directory layout.)
+> 4. Set `VCPKG_PATH` to the triplet's **installed** directory, not the vcpkg checkout root —
+>    pyaudio's `setup.py` does `os.path.join(WIN_VCPKG_PATH, 'include')` / `'lib'` directly:
+>    ```
+>    VCPKG_PATH=C:/Users/dell/vcpkg/installed/x64-windows-static
+>    ```
+>    (`VCPKG_PATH=C:/Users/dell/vcpkg` — the checkout root — silently produces the same missing-
+>    header failure, since `include`/`lib` don't exist directly under the vcpkg root, only under
+>    `installed/<triplet>/`.)
+> 5. `pip install pyaudio` then builds successfully and produces a **statically-linked** wheel —
+>    no runtime dependency on vcpkg or a portaudio DLL after install; `vcpkg` itself can be
+>    deleted post-build if desired.
 >
-> **Resolution path chosen (2026-07-25):** install Microsoft C++ Build Tools ("Desktop
-> development with C++" workload) so `pyaudio` can build from source against Python 3.14, then
-> retry `pip install pyaudio` and resume Task 4 from its brief — no code changes are needed,
-> the brief's Steps 1–3 are unchanged and ready to execute once the import succeeds.
+> Full diagnostic detail (both the original blocker and the resolution) is preserved in the
+> Task 4 SDD report.
 >
 > **When pyaudio ships an official `cp314` wheel** (check `pip index versions pyaudio` or
-> PyPI's file list for the `pyaudio` project), the Build Tools install becomes unnecessary for
-> future machines — `pip install pyaudio` alone will work again. Update this note when that
-> happens; it is safe to delete this whole callout once Task 4 is unblocked and merged.
+> PyPI's file list for the `pyaudio` project), all of the above becomes unnecessary for future
+> machines — plain `pip install pyaudio` will work again. Update this note when that happens;
+> it is safe to delete this whole callout once Task 4 is merged and stable.
 >
-> **Task 5 (`torch` + `silero-vad`) has not yet been attempted on this Python version** —
-> verify it installs before assuming it's unaffected; torch's wheel support for very new
-> CPython releases tends to lag too.
+> **Task 5 (`torch` + `silero-vad`) installed cleanly on this Python 3.14 environment with no
+> issues** — confirmed during Task 5's implementation, unlike pyaudio.
 
 ## Global Constraints
 
@@ -48,7 +71,7 @@
 
 ## Known Environment Risks (read before dispatching Tasks 4 and 5)
 
-- **Task 4 (`pyaudio`)** requires the native PortAudio library. On Windows, `pip install pyaudio` can fail without a prebuilt wheel. If it fails, try `pip install pipwin` then `pipwin install pyaudio` before escalating. If neither works, the implementer must report **BLOCKED** with the exact error — do not stub out the `pyaudio` import to force tests green.
+- **Task 4 (`pyaudio`)** requires the native PortAudio library. On Windows, `pip install pyaudio` can fail without a prebuilt wheel. If it fails, try `pip install pipwin` then `pipwin install pyaudio` before escalating; if both fail, see the resolved "ENVIRONMENT STATUS" callout above for the vcpkg-based fix that worked on this machine (already applied — `pyaudio` should already be importable in this environment; if `import pyaudio` fails again, re-apply that callout's steps before reporting BLOCKED).
 - **Task 5 (`torch` + Silero VAD)** pulls in a multi-hundred-MB dependency and the Silero model itself is fetched on first real use. The task's automated tests inject a fake model and never trigger a real download; only a manual smoke test (documented in the task's exit criteria) exercises the real model.
 
 ---
