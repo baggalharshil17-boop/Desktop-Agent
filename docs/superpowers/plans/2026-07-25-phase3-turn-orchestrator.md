@@ -1323,9 +1323,13 @@ class RealCartesiaTtsClient:
     PRD Section 10.2 output format (16kHz, pcm_s16le, matching mic capture
     rate so nothing needs resampling).
 
-    Verify against Cartesia's current Python SDK docs at build time -- this
-    adapter's websocket call shape is the highest-uncertainty piece of this
-    task.
+    Verified against the installed cartesia==3.5.0 SDK (Task 4 implementation):
+    `tts.websocket()` is itself a coroutine returning a connection object with
+    no `__aenter__`/`__aexit__` (not an async context manager), and streamed
+    responses are pydantic `BaseModel`s exposing `.audio` as an attribute, not
+    a dict -- both differ from an earlier draft of this plan. Re-verify
+    against Cartesia's current Python SDK docs if upgrading the pinned
+    version.
     """
 
     def __init__(self, cartesia_async_client, *, voice_id: str, model_id: str = "sonic-2") -> None:
@@ -1335,15 +1339,19 @@ class RealCartesiaTtsClient:
 
     async def synthesize(self, text: str) -> bytes:
         chunks: list[bytes] = []
-        async with self._client.tts.websocket() as ws:
-            async for response in ws.send(
+        ws = await self._client.tts.websocket()
+        try:
+            response_stream = await ws.send(
                 model_id=self._model_id,
                 transcript=text,
                 voice={"mode": "id", "id": self._voice_id},
                 output_format=CARTESIA_OUTPUT_FORMAT,
-            ):
-                if response.get("audio"):
-                    chunks.append(response["audio"])
+            )
+            async for response in response_stream:
+                if response.audio:
+                    chunks.append(response.audio)
+        finally:
+            await ws.close()
         return b"".join(chunks)
 ```
 
