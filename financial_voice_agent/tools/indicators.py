@@ -13,6 +13,14 @@ class InsufficientDataError(Exception):
     pass
 
 
+def _required_candles(indicator: str, params: dict) -> int:
+    if indicator in ("bollinger", "moving_average"):
+        return params.get("window", INDICATOR_MIN_CANDLES[indicator])
+    if indicator == "rsi":
+        return params.get("window", INDICATOR_MIN_CANDLES[indicator] - 1) + 1
+    return INDICATOR_MIN_CANDLES[indicator]  # fibonacci has no window param
+
+
 async def compute_indicator(
     symbol: str, indicator: str, params: dict, *, history_fn: HistoryFn
 ) -> dict:
@@ -26,7 +34,7 @@ async def compute_indicator(
         to_date=params.get("to"),
     )
     candles = history["candles"]
-    min_required = INDICATOR_MIN_CANDLES[indicator]
+    min_required = max(INDICATOR_MIN_CANDLES[indicator], _required_candles(indicator, params))
     if len(candles) < min_required:
         raise InsufficientDataError(
             f"{indicator} requires at least {min_required} candles, got {len(candles)}"

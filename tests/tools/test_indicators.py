@@ -78,3 +78,18 @@ async def test_compute_indicator_raises_on_unknown_indicator():
 
     with pytest.raises(ValueError, match="macd"):
         await compute_indicator("RELIANCE", "macd", {}, history_fn=history_fn)
+
+
+@pytest.mark.asyncio
+async def test_compute_indicator_raises_when_caller_requests_larger_window_than_available_candles():
+    # 15 candles is enough for the default rsi window (14, needs 15 candles),
+    # but NOT enough for a caller-requested window of 20 (needs 21 candles).
+    # Must still raise InsufficientDataError rather than silently computing
+    # NaN via a rolling(20) window that doesn't fit.
+    closes = [float(i) for i in range(1, 16)]  # 15 candles
+    history_fn = _make_history_fn(closes)
+
+    with pytest.raises(InsufficientDataError, match="21"):
+        await compute_indicator(
+            "RELIANCE", "rsi", {"window": 20}, history_fn=history_fn
+        )
