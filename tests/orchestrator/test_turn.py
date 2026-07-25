@@ -8,7 +8,14 @@ from financial_voice_agent.orchestrator.turn import LlmTurnResult, TurnResult, r
 
 def _fake_monotonic(values):
     it = iter(values)
-    return lambda: next(it)
+    last = [None]
+    def fn():
+        try:
+            last[0] = next(it)
+            return last[0]
+        except StopIteration:
+            return last[0]
+    return fn
 
 
 @pytest.mark.asyncio

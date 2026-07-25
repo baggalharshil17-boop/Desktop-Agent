@@ -47,19 +47,19 @@ async def run_turn(
     try:
         stt_start = time.monotonic()
         transcript = await stt_fn(utterance_wav)
-        latency_stt_ms = int((time.monotonic() - stt_start) * 1000)
+        latency_stt_ms = round((time.monotonic() - stt_start) * 1000)
 
         llm_start = time.monotonic()
         llm_result = await llm_fn(transcript, history)
-        latency_llm_ms = int((time.monotonic() - llm_start) * 1000)
+        latency_llm_ms = round((time.monotonic() - llm_start) * 1000)
 
         tts_start = time.monotonic()
         tts_audio = await tts_fn(llm_result.response_text)
-        latency_tts_ms = int((time.monotonic() - tts_start) * 1000)
+        latency_tts_ms = round((time.monotonic() - tts_start) * 1000)
     except Exception as exc:  # noqa: BLE001 -- a turn must never crash the caller
         error = str(exc)
 
-    latency_total_ms = int((time.monotonic() - turn_start) * 1000)
+    latency_total_ms = round((time.monotonic() - turn_start) * 1000)
 
     db.log_turn(
         db_path,
