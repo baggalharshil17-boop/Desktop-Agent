@@ -7,3 +7,5 @@ numpy
 noisereduce
 torch
 silero-vad
+pyaudio
+janus
