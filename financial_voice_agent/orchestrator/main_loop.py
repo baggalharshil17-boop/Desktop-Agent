@@ -16,6 +16,32 @@ async def drive_pipeline(pipeline, output_queue: asyncio.Queue) -> None:
         await output_queue.put(utterance_wav)
 
 
+async def _play_with_barge_in(
+    playback, tts_audio: bytes, pipeline, *, poll_interval: float = 0.02
+) -> bool:
+    """Runs playback.play() on a worker thread (asyncio.to_thread) rather
+    than calling it directly on the event loop thread. playback.play() is a
+    blocking, synchronous call (real PyAudio writes) -- calling it inline
+    inside a coroutine would freeze the ENTIRE event loop for the full
+    playback duration, not just this coroutine, which would stall
+    drive_pipeline's task too and freeze pipeline.speech_active exactly the
+    way that event's docstring warns against. While playback runs on its
+    worker thread, this function polls pipeline.speech_active every
+    poll_interval seconds and mirrors it into a threading.Event playback.play()
+    checks between chunks -- a one-time snapshot before playback starts is
+    not sufficient, since barge-in must be detected while the assistant is
+    still talking, not only in the instant before it starts."""
+    interrupt_event = threading.Event()
+    playback_task = asyncio.ensure_future(
+        asyncio.to_thread(playback.play, tts_audio, interrupt_event=interrupt_event)
+    )
+    while not playback_task.done():
+        if pipeline.speech_active.is_set():
+            interrupt_event.set()
+        await asyncio.sleep(poll_interval)
+    return playback_task.result()
+
+
 async def run_voice_loop(
     pipeline,
     playback,
@@ -47,9 +73,6 @@ async def run_voice_loop(
                 )
 
             if result.tts_audio:
-                interrupt_event = threading.Event()
-                if pipeline.speech_active.is_set():
-                    interrupt_event.set()
-                playback.play(result.tts_audio, interrupt_event=interrupt_event)
+                await _play_with_barge_in(playback, result.tts_audio, pipeline)
     finally:
         drive_task.cancel()
