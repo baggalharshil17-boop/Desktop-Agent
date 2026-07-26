@@ -2,6 +2,13 @@ vad:
   speech_threshold: 0.5
   silence_duration_ms: 600
   min_speech_duration_ms: 200
+  # false: disables barge-in (VAD-detected "speech" during playback never
+  # interrupts it). Needed on this laptop-speaker + headset-mic setup --
+  # the mic picks up enough speaker bleed to trigger barge-in almost
+  # instantly, cutting every response short after a word or two. Set back
+  # to true if input/output are acoustically isolated (e.g. headphones for
+  # both) and you want real interrupt-while-speaking support.
+  barge_in_enabled: false
 
 audio:
   # null = follow whatever Windows currently has set as default (via the WASAPI host

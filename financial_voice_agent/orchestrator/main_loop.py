@@ -55,7 +55,7 @@ async def drive_pipeline(pipeline, output_queue: asyncio.Queue) -> None:
 
 
 async def play_with_barge_in(
-    playback, tts_audio: bytes, pipeline, *, poll_interval: float = 0.02
+    playback, tts_audio: bytes, pipeline, *, poll_interval: float = 0.02, barge_in_enabled: bool = True
 ) -> bool:
     """Runs playback.play() on a worker thread (asyncio.to_thread) rather
     than calling it directly on the event loop thread. playback.play() is a
@@ -68,13 +68,22 @@ async def play_with_barge_in(
     poll_interval seconds and mirrors it into a threading.Event playback.play()
     checks between chunks -- a one-time snapshot before playback starts is
     not sufficient, since barge-in must be detected while the assistant is
-    still talking, not only in the instant before it starts."""
+    still talking, not only in the instant before it starts.
+
+    barge_in_enabled=False ignores pipeline.speech_active entirely, playing
+    the full response regardless. This is for setups where mic and speaker
+    aren't acoustically isolated (e.g. a headset mic picking up bleed from
+    laptop speakers) -- there, speech_active fires almost immediately from
+    the assistant's own voice, cutting every response short after a word or
+    two, with no way to distinguish that from real user barge-in using VAD
+    alone. Confirmed live: this exact scenario reproduced on a laptop-
+    speaker + headset-mic setup."""
     interrupt_event = threading.Event()
     playback_task = asyncio.ensure_future(
         asyncio.to_thread(playback.play, tts_audio, interrupt_event=interrupt_event)
     )
     while not playback_task.done():
-        if pipeline.speech_active.is_set():
+        if barge_in_enabled and pipeline.speech_active.is_set():
             interrupt_event.set()
         await asyncio.sleep(poll_interval)
     return playback_task.result()
@@ -111,6 +120,7 @@ async def run_voice_loop(
     max_turns_history: int = 8,
     choice_fn: Callable[[list[str]], str] = random.choice,
     recent_fallback_window: int = 5,
+    barge_in_enabled: bool = True,
 ) -> None:
     output_queue: asyncio.Queue = asyncio.Queue()
     drive_task = asyncio.create_task(drive_pipeline(pipeline, output_queue))
@@ -144,8 +154,12 @@ async def run_voice_loop(
                 except Exception:  # noqa: BLE001 -- fallback TTS failing must not crash the loop
                     fallback_audio = None
                 if fallback_audio:
-                    await play_with_barge_in(playback, fallback_audio, pipeline)
+                    await play_with_barge_in(
+                        playback, fallback_audio, pipeline, barge_in_enabled=barge_in_enabled
+                    )
             elif result.tts_audio:
-                await play_with_barge_in(playback, result.tts_audio, pipeline)
+                await play_with_barge_in(
+                    playback, result.tts_audio, pipeline, barge_in_enabled=barge_in_enabled
+                )
     finally:
         drive_task.cancel()

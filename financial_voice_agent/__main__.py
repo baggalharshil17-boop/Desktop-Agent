@@ -90,7 +90,9 @@ async def main() -> None:
         # failures -- a missed ack must never break or delay the real turn.
         try:
             audio = await synthesize_with_fallback(tts_client, "Let me check that for you.")
-            await play_with_barge_in(playback, audio, pipeline)
+            await play_with_barge_in(
+                playback, audio, pipeline, barge_in_enabled=config.barge_in_enabled
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -120,6 +122,7 @@ async def main() -> None:
             llm_fn=llm_fn,
             tts_fn=tts_fn,
             db_path=config.storage_db_path,
+            barge_in_enabled=config.barge_in_enabled,
         )
     except asyncio.CancelledError:
         pass

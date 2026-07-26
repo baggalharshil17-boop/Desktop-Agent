@@ -173,6 +173,42 @@ async def test_run_voice_loop_stops_playback_mid_stream_when_speech_active_set_d
 
 
 @pytest.mark.asyncio
+async def test_run_voice_loop_ignores_speech_active_when_barge_in_disabled(tmp_path):
+    # Setups where mic/speaker aren't acoustically isolated (e.g. a headset
+    # mic picking up laptop-speaker bleed) can have speech_active fire from
+    # the assistant's own voice, not real user barge-in. barge_in_enabled=
+    # False must play the full response regardless of speech_active.
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    pipeline = _FakePipeline([b"utterance-1"])
+    playback = _SlowFakePlayback(num_chunks=15, chunk_delay=0.02)
+
+    async def stt_fn(wav):
+        return "hello"
+
+    async def llm_fn(transcript, history):
+        return LlmTurnResult(response_text="a long response", tool_calls_json=None, tool_results_json=None)
+
+    async def tts_fn(text):
+        return b"audio-bytes"
+
+    async def set_speech_active_partway_through():
+        await asyncio.sleep(0.06)
+        pipeline.speech_active.set()
+
+    setter_task = asyncio.create_task(set_speech_active_partway_through())
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path,
+        barge_in_enabled=False,
+    )
+    await setter_task
+
+    assert len(playback.play_calls) == 1
+    # All 15 chunks written -- speech_active being set had no effect.
+    assert playback.play_calls[0] == 15
+
+
+@pytest.mark.asyncio
 async def test_run_voice_loop_speaks_fallback_message_on_stt_failure(tmp_path):
     db_path = str(tmp_path / "turns.db")
     init_db(db_path)

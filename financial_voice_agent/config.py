@@ -22,6 +22,7 @@ class Config:
     vad_speech_threshold: float
     vad_silence_duration_ms: int
     vad_min_speech_duration_ms: int
+    barge_in_enabled: bool
     audio_output_device_index: int | None
     audio_input_device_index: int | None
     input_mode: str
@@ -122,6 +123,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             vad_speech_threshold=raw["vad"]["speech_threshold"],
             vad_silence_duration_ms=raw["vad"]["silence_duration_ms"],
             vad_min_speech_duration_ms=raw["vad"]["min_speech_duration_ms"],
+            barge_in_enabled=raw["vad"].get("barge_in_enabled", True),
             audio_output_device_index=raw["audio"]["output_device_index"],
             audio_input_device_index=raw["audio"].get("input_device_index"),
             input_mode=raw["input_mode"],
