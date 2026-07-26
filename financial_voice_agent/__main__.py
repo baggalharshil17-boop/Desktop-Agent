@@ -32,7 +32,7 @@ from financial_voice_agent.config import load_config
 from financial_voice_agent.db import init_db
 from financial_voice_agent.http_clients import close_http_clients, create_http_clients
 from financial_voice_agent.orchestrator.llm import make_llm_client, run_llm_turn
-from financial_voice_agent.orchestrator.main_loop import run_voice_loop
+from financial_voice_agent.orchestrator.main_loop import play_with_barge_in, run_voice_loop
 from financial_voice_agent.orchestrator.playback import AudioPlayback
 from financial_voice_agent.orchestrator.stt import make_stt_client, transcribe_with_retry
 from financial_voice_agent.orchestrator.system_prompt import SYSTEM_PROMPT
@@ -72,6 +72,16 @@ async def main() -> None:
     async def stt_fn(wav_bytes: bytes) -> str:
         return await transcribe_with_retry(stt_client, wav_bytes, model=config.stt_model)
 
+    async def speak_ack() -> None:
+        # Runs concurrently with the tool call so there's no dead air while
+        # a slow tool (e.g. get_news's web search) is in flight. Swallow
+        # failures -- a missed ack must never break or delay the real turn.
+        try:
+            audio = await synthesize_with_fallback(tts_client, "Let me check that for you.")
+            await play_with_barge_in(playback, audio, pipeline)
+        except Exception:  # noqa: BLE001
+            pass
+
     async def llm_fn(transcript: str, history: list[dict]):
         return await run_llm_turn(
             llm_client,
@@ -81,6 +91,7 @@ async def main() -> None:
             tools_schema=TOOLS_SCHEMA,
             tool_executor=tool_executor,
             system_prompt=SYSTEM_PROMPT,
+            on_tool_call_started=speak_ack,
         )
 
     async def tts_fn(text: str) -> bytes:

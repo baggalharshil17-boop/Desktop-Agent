@@ -54,6 +54,7 @@ async def run_llm_turn(
     max_tool_rounds: int = 3,
     sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
     clock_fn: Callable[[], float] = time.monotonic,
+    on_tool_call_started: Callable[[], Awaitable[None]] | None = None,
 ) -> LlmTurnResult:
     messages = list(history)
     if system_prompt is not None:
@@ -62,69 +63,94 @@ async def run_llm_turn(
     all_tool_calls: list[dict] = []
     all_tool_results: list[dict] = []
     total_tool_ms = 0
+    ack_task: asyncio.Task | None = None
 
-    for _round in range(max_tool_rounds):
-        completion = await _complete_with_retry(
-            client, messages, model=model, tools_schema=tools_schema, sleep_fn=sleep_fn
-        )
-
-        if not completion.tool_calls:
-            return LlmTurnResult(
-                response_text=completion.text or "",
-                tool_calls_json=json.dumps(all_tool_calls) if all_tool_calls else None,
-                tool_results_json=json.dumps(all_tool_results) if all_tool_results else None,
-                latency_tool_ms=total_tool_ms or None,
+    try:
+        for _round in range(max_tool_rounds):
+            completion = await _complete_with_retry(
+                client, messages, model=model, tools_schema=tools_schema, sleep_fn=sleep_fn
             )
 
-        messages.append(
-            {
-                "role": "assistant",
-                "content": completion.text,
-                "tool_calls": [
-                    {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
-                    }
-                    for call in completion.tool_calls
-                ],
-            }
-        )
-
-        tool_start = clock_fn()
-        results = await asyncio.gather(*(tool_executor(call) for call in completion.tool_calls))
-        total_tool_ms += round((clock_fn() - tool_start) * 1000)
-        for call, result in zip(completion.tool_calls, results):
-            # capture_screen's result carries the actual image (image_b64/
-            # image_mime) so a vision-capable model can describe what's on
-            # screen -- see financial_voice_agent/tools/screen.py. Neither
-            # the tool message sent back to the model nor the turn log
-            # needs a multi-KB base64 blob duplicated in text form, so both
-            # get the stripped dict; the image itself goes out as a
-            # separate image_url content block below.
-            image_b64 = result.get("image_b64")
-            image_mime = result.get("image_mime", "image/jpeg")
-            result_for_logging = {k: v for k, v in result.items() if k not in ("image_b64", "image_mime")}
-            all_tool_calls.append({"tool": call.name, "args": call.arguments})
-            all_tool_results.append(result_for_logging)
-            messages.append(
-                {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result_for_logging)}
-            )
-            if image_b64:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Here is the screenshot from capture_screen:"},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
-                            },
-                        ],
-                    }
+            if not completion.tool_calls:
+                return LlmTurnResult(
+                    response_text=completion.text or "",
+                    tool_calls_json=json.dumps(all_tool_calls) if all_tool_calls else None,
+                    tool_results_json=json.dumps(all_tool_results) if all_tool_results else None,
+                    latency_tool_ms=total_tool_ms or None,
                 )
 
-    raise LlmError("LLM tool loop did not converge within max_tool_rounds")
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": completion.text,
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                        }
+                        for call in completion.tool_calls
+                    ],
+                }
+            )
+
+            # Fire the "let me check that" ack once, in parallel with tool
+            # execution, rather than leaving the user in dead air while a
+            # slow tool (e.g. get_news's web search) runs. Not awaited here
+            # -- the outer finally joins it before this function returns or
+            # raises, so it always finishes before any later audio (a
+            # further round's ack, the final response, or a caller's error
+            # fallback) starts playing on the same output stream, without
+            # blocking the tool call on the ack's own playback time.
+            if on_tool_call_started is not None and ack_task is None:
+                ack_task = asyncio.ensure_future(on_tool_call_started())
+
+            tool_start = clock_fn()
+            results = await asyncio.gather(*(tool_executor(call) for call in completion.tool_calls))
+            total_tool_ms += round((clock_fn() - tool_start) * 1000)
+            for call, result in zip(completion.tool_calls, results):
+                # capture_screen's result carries the actual image (image_b64/
+                # image_mime) so a vision-capable model can describe what's on
+                # screen -- see financial_voice_agent/tools/screen.py. Neither
+                # the tool message sent back to the model nor the turn log
+                # needs a multi-KB base64 blob duplicated in text form, so both
+                # get the stripped dict; the image itself goes out as a
+                # separate image_url content block below.
+                image_b64 = result.get("image_b64")
+                image_mime = result.get("image_mime", "image/jpeg")
+                result_for_logging = {
+                    k: v for k, v in result.items() if k not in ("image_b64", "image_mime")
+                }
+                all_tool_calls.append({"tool": call.name, "args": call.arguments})
+                all_tool_results.append(result_for_logging)
+                messages.append(
+                    {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result_for_logging)}
+                )
+                if image_b64:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Here is the screenshot from capture_screen:"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
+                                },
+                            ],
+                        }
+                    )
+
+        raise LlmError("LLM tool loop did not converge within max_tool_rounds")
+    finally:
+        if ack_task is not None:
+            # A failed ack (e.g. the ack's own TTS/playback call errors)
+            # must never mask this function's real return value or
+            # exception -- on_tool_call_started is a best-effort UX nicety,
+            # not part of the turn's success/failure contract.
+            try:
+                await ack_task
+            except Exception:  # noqa: BLE001
+                pass
 
 
 async def _complete_with_retry(

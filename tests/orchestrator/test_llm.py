@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from financial_voice_agent.orchestrator.llm import (
@@ -79,6 +81,59 @@ async def test_run_llm_turn_executes_tool_call_then_returns_final_text():
 
 
 @pytest.mark.asyncio
+async def test_run_llm_turn_fires_on_tool_call_started_once_and_awaits_it_before_returning():
+    ack_calls = 0
+    ack_finished = False
+
+    async def on_tool_call_started():
+        nonlocal ack_calls, ack_finished
+        ack_calls += 1
+        await asyncio.sleep(0.01)
+        ack_finished = True
+
+    class _TwoRoundToolCallClient:
+        def __init__(self):
+            self.round = 0
+
+        async def complete(self, messages, *, model, tools_schema):
+            self.round += 1
+            if self.round <= 2:
+                return LlmCompletion(
+                    text=None,
+                    tool_calls=[ToolCall(id=f"c{self.round}", name="get_quote", arguments={})],
+                )
+            return LlmCompletion(text="done", tool_calls=[])
+
+    result = await run_llm_turn(
+        _TwoRoundToolCallClient(), "transcript", [],
+        model="test-model", tools_schema=[], tool_executor=_tool_executor,
+        max_tool_rounds=3, on_tool_call_started=on_tool_call_started,
+    )
+
+    assert result.response_text == "done"
+    # Fired once even though two rounds of tool calls happened.
+    assert ack_calls == 1
+    # run_llm_turn must join the ack task before returning, so a caller
+    # never starts playing the real response while the ack is still
+    # mid-playback on the same output stream.
+    assert ack_finished is True
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_swallows_on_tool_call_started_failures():
+    async def failing_ack():
+        raise RuntimeError("TTS unavailable")
+
+    result = await run_llm_turn(
+        _OneRoundToolCallClient(), "what's the nifty level", [],
+        model="test-model", tools_schema=[], tool_executor=_tool_executor,
+        on_tool_call_started=failing_ack,
+    )
+
+    assert result.response_text == "Nifty is at 24500."
+
+
+@pytest.mark.asyncio
 async def test_run_llm_turn_executes_concurrent_tool_calls_via_gather():
     call_order: list[str] = []
 
@@ -123,6 +178,25 @@ async def test_run_llm_turn_raises_llmerror_if_tool_loop_never_converges():
             _NeverConvergesClient(), "transcript", [],
             model="test-model", tools_schema=[], tool_executor=_tool_executor, max_tool_rounds=2,
         )
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_joins_ack_task_even_when_loop_never_converges():
+    ack_finished = False
+
+    async def on_tool_call_started():
+        nonlocal ack_finished
+        await asyncio.sleep(0.01)
+        ack_finished = True
+
+    with pytest.raises(LlmError):
+        await run_llm_turn(
+            _NeverConvergesClient(), "transcript", [],
+            model="test-model", tools_schema=[], tool_executor=_tool_executor, max_tool_rounds=2,
+            on_tool_call_started=on_tool_call_started,
+        )
+
+    assert ack_finished is True
 
 
 @pytest.mark.asyncio

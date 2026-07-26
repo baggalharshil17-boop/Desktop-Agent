@@ -23,7 +23,7 @@ async def drive_pipeline(pipeline, output_queue: asyncio.Queue) -> None:
         await output_queue.put(encode_wav(utterance_pcm))
 
 
-async def _play_with_barge_in(
+async def play_with_barge_in(
     playback, tts_audio: bytes, pipeline, *, poll_interval: float = 0.02
 ) -> bool:
     """Runs playback.play() on a worker thread (asyncio.to_thread) rather
@@ -94,8 +94,8 @@ async def run_voice_loop(
                 except Exception:  # noqa: BLE001 -- fallback TTS failing must not crash the loop
                     fallback_audio = None
                 if fallback_audio:
-                    await _play_with_barge_in(playback, fallback_audio, pipeline)
+                    await play_with_barge_in(playback, fallback_audio, pipeline)
             elif result.tts_audio:
-                await _play_with_barge_in(playback, result.tts_audio, pipeline)
+                await play_with_barge_in(playback, result.tts_audio, pipeline)
     finally:
         drive_task.cancel()
