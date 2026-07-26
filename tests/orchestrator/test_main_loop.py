@@ -2,7 +2,13 @@ import asyncio
 
 import pytest
 
-from financial_voice_agent.orchestrator.main_loop import drive_pipeline, run_voice_loop
+from financial_voice_agent.orchestrator.main_loop import (
+    GENERIC_FAILURE_MESSAGES,
+    RATE_LIMIT_MESSAGES,
+    STT_FAILURE_MESSAGES,
+    drive_pipeline,
+    run_voice_loop,
+)
 from financial_voice_agent.orchestrator.turn import LlmTurnResult
 from financial_voice_agent.db import init_db
 
@@ -186,11 +192,12 @@ async def test_run_voice_loop_speaks_fallback_message_on_stt_failure(tmp_path):
         return f"audio-for:{text}".encode()
 
     await run_voice_loop(
-        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path,
+        choice_fn=lambda options: options[0],
     )
 
-    assert tts_calls == ["I didn't catch that, one moment"]
-    assert playback.play_calls == [b"audio-for:I didn't catch that, one moment"]
+    assert tts_calls == [STT_FAILURE_MESSAGES[0]]
+    assert playback.play_calls == [f"audio-for:{STT_FAILURE_MESSAGES[0]}".encode()]
 
 
 @pytest.mark.asyncio
@@ -215,10 +222,74 @@ async def test_run_voice_loop_speaks_rate_limit_message_on_llm_rate_limit(tmp_pa
         return f"audio-for:{text}".encode()
 
     await run_voice_loop(
-        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path,
+        choice_fn=lambda options: options[0],
     )
 
-    assert tts_calls == ["I've hit a usage limit — give me a second"]
+    assert tts_calls == [RATE_LIMIT_MESSAGES[0]]
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_speaks_generic_fallback_when_stt_succeeded_but_llm_failed(tmp_path):
+    # STT succeeded (there's a transcript) but the LLM call failed for some
+    # other reason -- "I didn't catch that" would be a lie here, since we
+    # clearly did hear the user. Must use the generic-failure phrasing, not
+    # the STT one.
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    pipeline = _FakePipeline([b"utterance-1"])
+    playback = _FakePlayback()
+
+    async def stt_fn(wav):
+        return "what's the nifty level"
+
+    async def llm_fn(transcript, history):
+        raise RuntimeError("model provider unavailable")
+
+    tts_calls: list[str] = []
+
+    async def tts_fn(text):
+        tts_calls.append(text)
+        return f"audio-for:{text}".encode()
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path,
+        choice_fn=lambda options: options[0],
+    )
+
+    assert tts_calls == [GENERIC_FAILURE_MESSAGES[0]]
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_does_not_repeat_fallback_message_within_recent_window(tmp_path):
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    # Five consecutive STT failures -- with a recent_fallback_window of 5,
+    # none of these should repeat, even though choice_fn always prefers the
+    # first available candidate (proving the filtering, not just luck).
+    pipeline = _FakePipeline([b"utterance-1"] * 5)
+    playback = _FakePlayback()
+
+    async def stt_fn(wav):
+        raise RuntimeError("groq is down")
+
+    async def llm_fn(transcript, history):
+        raise AssertionError("must not be called after stt_fn fails")
+
+    tts_calls: list[str] = []
+
+    async def tts_fn(text):
+        tts_calls.append(text)
+        return f"audio-for:{text}".encode()
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path,
+        choice_fn=lambda options: options[0], recent_fallback_window=5,
+    )
+
+    assert len(tts_calls) == 5
+    assert len(set(tts_calls)) == 5  # no repeats within the 5-message window
+    assert set(tts_calls) == set(STT_FAILURE_MESSAGES)  # exactly 5 phrases exist for this category
 
 
 @pytest.mark.asyncio

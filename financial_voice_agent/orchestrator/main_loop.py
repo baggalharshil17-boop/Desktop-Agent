@@ -1,10 +1,41 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import threading
+from collections import deque
+from typing import Callable
 
 from financial_voice_agent.audio.wav import encode_wav
 from financial_voice_agent.orchestrator.turn import run_turn, update_history
+
+# Separate phrasing per failure stage -- "I didn't catch that" is only
+# honest when STT itself is what failed (result.transcript is None).
+# Saying it when STT succeeded but the LLM/tool call failed downstream
+# wrongly implies a hearing problem. Several phrasings per category, picked
+# via choice_fn and filtered against recently-used ones, so the agent
+# doesn't parrot the identical line on repeated failures.
+STT_FAILURE_MESSAGES = [
+    "I didn't catch that, one moment.",
+    "Sorry, didn't quite hear you there.",
+    "That didn't come through clearly, could you say it again?",
+    "Missed that one, one more time?",
+    "Didn't quite get that, mind repeating?",
+]
+
+RATE_LIMIT_MESSAGES = [
+    "I've hit a usage limit — give me a second.",
+    "Running low on quota right now, hang tight a moment.",
+    "Rate limited at the moment, one sec.",
+    "Hitting a rate limit — give me just a second.",
+]
+
+GENERIC_FAILURE_MESSAGES = [
+    "Something went wrong on my end, one moment.",
+    "Hit a snag processing that, let me try again.",
+    "Ran into an issue there, give me a second.",
+    "That didn't go through on my end, one moment.",
+]
 
 
 async def drive_pipeline(pipeline, output_queue: asyncio.Queue) -> None:
@@ -49,6 +80,26 @@ async def play_with_barge_in(
     return playback_task.result()
 
 
+def _pick_fallback_message(
+    result, recent_messages: deque, choice_fn: Callable[[list[str]], str]
+) -> str:
+    if result.rate_limited:
+        candidates = RATE_LIMIT_MESSAGES
+    elif result.transcript is None:
+        # STT itself never produced a transcript -- "didn't catch that" is
+        # accurate here.
+        candidates = STT_FAILURE_MESSAGES
+    else:
+        # STT succeeded (we have a transcript) but something failed
+        # downstream (LLM/tool) -- saying "didn't catch that" would be a lie.
+        candidates = GENERIC_FAILURE_MESSAGES
+
+    available = [m for m in candidates if m not in recent_messages] or candidates
+    message = choice_fn(available)
+    recent_messages.append(message)
+    return message
+
+
 async def run_voice_loop(
     pipeline,
     playback,
@@ -58,10 +109,13 @@ async def run_voice_loop(
     tts_fn,
     db_path: str,
     max_turns_history: int = 8,
+    choice_fn: Callable[[list[str]], str] = random.choice,
+    recent_fallback_window: int = 5,
 ) -> None:
     output_queue: asyncio.Queue = asyncio.Queue()
     drive_task = asyncio.create_task(drive_pipeline(pipeline, output_queue))
     history: list[dict] = []
+    recent_fallback_messages: deque = deque(maxlen=recent_fallback_window)
 
     try:
         while not drive_task.done() or not output_queue.empty():
@@ -84,11 +138,7 @@ async def run_voice_loop(
                 )
 
             if result.error is not None:
-                message = (
-                    "I've hit a usage limit — give me a second"
-                    if result.rate_limited
-                    else "I didn't catch that, one moment"
-                )
+                message = _pick_fallback_message(result, recent_fallback_messages, choice_fn)
                 try:
                     fallback_audio = await tts_fn(message)
                 except Exception:  # noqa: BLE001 -- fallback TTS failing must not crash the loop
