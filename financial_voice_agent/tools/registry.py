@@ -24,6 +24,13 @@ from financial_voice_agent.tools.screen import (
 
 _FIXTURES_DIR = str(pathlib.Path(__file__).resolve().parent.parent.parent / "fixtures")
 
+
+class UnknownToolError(ValueError):
+    """A tool_call name outside TOOLS_SCHEMA -- a dev-time contract bug (the
+    LLM should never be able to name a tool that isn't in TOOLS_SCHEMA), not
+    a runtime failure -- so this must keep crashing loudly rather than being
+    swallowed into a spoken {"error": ...} by executor()'s catch-all below."""
+
 TOOLS_SCHEMA = [
     {
         "type": "function",
@@ -142,7 +149,7 @@ async def _dispatch(call: ToolCall, config, http_clients, instrument_cache: dict
         )
     if call.name == "capture_screen":
         return await capture_screen(window_finder=find_kite_window, screenshot_fn=capture_region)
-    raise ValueError(f"Unknown tool: {call.name}")
+    raise UnknownToolError(f"Unknown tool: {call.name}")
 
 
 def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[dict]]:
@@ -169,5 +176,18 @@ def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[d
             return {"error": "Could not find the Kite window on screen"}
         except TypeError as exc:
             return {"error": f"Invalid arguments for tool '{call.name}': {exc}"}
+        except UnknownToolError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # Any tool failure not covered by a specific case above (e.g. a
+            # raw httpx.HTTPStatusError from a Kite error this code doesn't
+            # specifically recognize, like a 403 PermissionException for an
+            # account without historical-data access) must still become a
+            # tool result the LLM can see and explain out loud -- not an
+            # uncaught exception. Letting one escape crashes the whole turn,
+            # and the caller's fallback ("I didn't catch that, one moment")
+            # is actively misleading for a tool/API failure that has nothing
+            # to do with hearing the user.
+            return {"error": f"Tool '{call.name}' failed: {exc}"}
 
     return executor

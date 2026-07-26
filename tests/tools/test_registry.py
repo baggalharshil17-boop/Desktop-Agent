@@ -110,6 +110,34 @@ async def test_executor_translates_bad_arguments_to_error_dict():
 
 
 @pytest.mark.asyncio
+async def test_executor_translates_unexpected_exceptions_to_error_dict_instead_of_crashing():
+    # A raw exception this executor doesn't specifically recognize (e.g. an
+    # httpx.HTTPStatusError from a Kite error code this code doesn't handle
+    # by name, like a 403 PermissionException for missing historical-data
+    # access) must still become a tool result the LLM can see and explain
+    # out loud -- not an uncaught exception that crashes the whole turn and
+    # forces a generic, misleading "I didn't catch that" fallback.
+    class _FakeConfigLiveMode:
+        mode = "live"
+        tavily_api_key = "test-tavily-key"
+
+    class _FailingKiteHttpClient:
+        async def get(self, path, params=None):
+            raise RuntimeError("Client error '403 Forbidden' for url '...': Insufficient permission")
+
+    class _HttpClientsWithFailingKite:
+        kite = _FailingKiteHttpClient()
+        tavily = None
+
+    executor = make_tool_executor(_FakeConfigLiveMode(), _HttpClientsWithFailingKite())
+
+    result = await executor(ToolCall(id="1", name="get_quote", arguments={"symbol": "NIFTY 50"}))
+
+    assert "error" in result
+    assert "get_quote" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_executor_dispatches_get_news_in_mock_mode_without_network():
     class _HttpClientsWithFailingTavily:
         kite = None
