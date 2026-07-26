@@ -1,3 +1,5 @@
+import pathlib
+
 import pytest
 
 from financial_voice_agent.orchestrator.stt import (
@@ -88,10 +90,15 @@ class _FakeHfInferenceClient:
     def __init__(self, output):
         self._output = output
         self.received_audio = None
+        self.received_audio_bytes = None
         self.received_model = None
 
     async def automatic_speech_recognition(self, audio, *, model=None):
         self.received_audio = audio
+        # Read now -- the adapter deletes the temp file right after this
+        # call returns, so the path won't be readable by the time the test
+        # asserts on it.
+        self.received_audio_bytes = audio.read_bytes()
         self.received_model = model
         return self._output
 
@@ -104,7 +111,13 @@ async def test_huggingface_stt_client_calls_automatic_speech_recognition_with_wa
     result = await adapter.transcribe(b"wav-bytes", model="openai/whisper-large-v3-turbo")
 
     assert result == "hf transcribed text"
-    assert client.received_audio == b"wav-bytes"
+    # hf-inference's ASR helper only accepts bytes/Path/str (rejects
+    # file-like objects), and bytes alone carry no MIME type -- so the
+    # adapter writes to a temp .wav file and passes its Path instead.
+    assert isinstance(client.received_audio, pathlib.Path)
+    assert client.received_audio.suffix == ".wav"
+    assert client.received_audio_bytes == b"wav-bytes"
+    assert not client.received_audio.exists()  # cleaned up after the call
     assert client.received_model == "openai/whisper-large-v3-turbo"
 
 

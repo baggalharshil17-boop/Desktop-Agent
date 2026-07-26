@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
+import tempfile
 from typing import Awaitable, Callable, Protocol
 
 import groq
@@ -68,13 +70,29 @@ class HuggingFaceSttClient:
     up -- this can take longer to clear than transcribe_with_retry's default
     3-attempt/1s-backoff policy covers, so a cold HF endpoint may still
     surface as SttError on the first real call.
+
+    Raw `bytes` alone don't carry a MIME type, and huggingface_hub can't
+    guess one from bytes -- it sends Content-Type: None, which HF's server
+    rejects with "Content type None not supported" (confirmed against a
+    real call). A file-like object doesn't work either -- the hf-inference
+    provider's ASR helper only accepts bytes, Path, or str (confirmed
+    against the installed SDK's source), so a BytesIO is rejected outright.
+    Writing to a temp .wav file and passing its Path is the only input shape
+    that both is accepted and lets the SDK guess audio/wav from the
+    extension.
     """
 
     def __init__(self, client) -> None:
         self._client = client  # a huggingface_hub.AsyncInferenceClient
 
     async def transcribe(self, wav_bytes: bytes, *, model: str) -> str:
-        output = await self._client.automatic_speech_recognition(wav_bytes, model=model)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(wav_bytes)
+            temp_path = pathlib.Path(f.name)
+        try:
+            output = await self._client.automatic_speech_recognition(temp_path, model=model)
+        finally:
+            temp_path.unlink(missing_ok=True)
         return output if isinstance(output, str) else output.text
 
 
