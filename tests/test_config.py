@@ -60,6 +60,7 @@ def test_load_config_reads_yaml_and_env(tmp_path, monkeypatch):
     assert config.vad_silence_duration_ms == 600
     assert config.vad_min_speech_duration_ms == 200
     assert config.audio_output_device_index is None
+    assert config.audio_input_device_index is None
     assert config.input_mode == "always_on"
     assert config.tts_provider == "cartesia"
     assert config.stt_provider == "groq"
@@ -70,6 +71,43 @@ def test_load_config_reads_yaml_and_env(tmp_path, monkeypatch):
     assert config.mode == "live"
     assert config.groq_api_key == "groq-secret"
     assert config.cartesia_api_key == "cartesia-secret"
+
+
+def test_load_config_reads_explicit_input_device_index(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+          input_device_index: 9
+        input_mode: "always_on"
+        tts:
+          provider: "cartesia"
+          voice_id: "test-voice-id"
+        stt:
+          provider: "groq"
+          model: "test-stt-model"
+        llm:
+          provider: "groq"
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(
+        tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n"
+    )
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.audio_input_device_index == 9
 
 
 def test_load_config_missing_groq_key_raises(tmp_path, monkeypatch):

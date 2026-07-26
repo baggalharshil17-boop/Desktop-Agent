@@ -23,9 +23,11 @@ from __future__ import annotations
 import asyncio
 
 import janus
+import pyaudio
 from cartesia import AsyncCartesia
 
 from financial_voice_agent.audio.capture import AudioCapture
+from financial_voice_agent.audio.devices import resolve_input_device_index, resolve_output_device_index
 from financial_voice_agent.audio.pipeline import AudioPipeline
 from financial_voice_agent.audio.vad import SileroVadScorer
 from financial_voice_agent.config import load_config
@@ -51,8 +53,18 @@ async def main() -> None:
     init_db(config.storage_db_path)
     http_clients = await create_http_clients(config)
 
+    # Resolved once via a throwaway PyAudio instance, using the WASAPI host
+    # API's default device when config leaves output/input_device_index as
+    # null -- WASAPI is what Windows Sound Settings actually controls, and
+    # tracks live device changes that PyAudio's own "default" (a different,
+    # less reliable host API) can silently miss. See audio/devices.py.
+    device_probe = pyaudio.PyAudio()
+    output_device_index = resolve_output_device_index(device_probe, config.audio_output_device_index)
+    input_device_index = resolve_input_device_index(device_probe, config.audio_input_device_index)
+    device_probe.terminate()
+
     capture_queue: janus.Queue = janus.Queue()
-    capture = AudioCapture(capture_queue)
+    capture = AudioCapture(capture_queue, input_device_index=input_device_index)
     pipeline = AudioPipeline(
         capture_queue.async_q,
         SileroVadScorer(),
@@ -60,7 +72,7 @@ async def main() -> None:
         silence_duration_ms=config.vad_silence_duration_ms,
         min_speech_duration_ms=config.vad_min_speech_duration_ms,
     )
-    playback = AudioPlayback(output_device_index=config.audio_output_device_index)
+    playback = AudioPlayback(output_device_index=output_device_index)
 
     stt_client = make_stt_client(config)
     llm_client = make_llm_client(config)

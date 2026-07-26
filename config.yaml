@@ -4,7 +4,12 @@ vad:
   min_speech_duration_ms: 200
 
 audio:
-  output_device_index: 4  # Headset Earphone (Jabra Evolve2 40 SE) -- pinned explicitly, "OS default" (null) wasn't routing here reliably
+  # null = follow whatever Windows currently has set as default (via the WASAPI host
+  # API, which is what Windows Sound Settings actually controls -- not PyAudio's own
+  # "default", which resolves through a different, less reliable host API and can go
+  # stale when you change devices). Set an explicit integer index only to override.
+  output_device_index: null
+  input_device_index: null
 
 input_mode: "always_on"  # or "ptt"
 tts:

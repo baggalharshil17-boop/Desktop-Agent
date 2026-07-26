@@ -15,6 +15,7 @@ def _make_config(
         vad_silence_duration_ms=600,
         vad_min_speech_duration_ms=200,
         audio_output_device_index=None,
+        audio_input_device_index=None,
         input_mode="always_on",
         tts_provider=tts_provider,
         cartesia_voice_id="test-voice-id",
