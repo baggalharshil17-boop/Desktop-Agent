@@ -12,8 +12,8 @@ tts:
   voice_id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
 
 stt:
-  provider: "huggingface"  # or "groq" -- switch to "groq" once you have Groq credits
-  model: "openai/whisper-large-v3-turbo"  # Hugging Face model id, or a Groq Whisper model id when provider is "groq"
+  provider: "groq"  # or "huggingface" -- HF Inference credits ran out (402), switched back
+  model: "whisper-large-v3-turbo"
 
 llm:
   provider: "groq"  # or "huggingface"
