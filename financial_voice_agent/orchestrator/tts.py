@@ -55,7 +55,7 @@ class RealCartesiaTtsClient:
     would raise, since BaseModel is not subscriptable.
     """
 
-    def __init__(self, cartesia_async_client, *, voice_id: str, model_id: str = "sonic-2") -> None:
+    def __init__(self, cartesia_async_client, *, voice_id: str, model_id: str = "sonic-3.5") -> None:
         self._client = cartesia_async_client
         self._voice_id = voice_id
         self._model_id = model_id
