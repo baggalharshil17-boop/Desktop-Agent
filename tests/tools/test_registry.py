@@ -103,7 +103,7 @@ async def test_executor_translates_bad_arguments_to_error_dict():
 
     # An extra/unexpected keyword argument from the LLM must not crash the tool loop.
     result = await executor(
-        ToolCall(id="1", name="get_quote", arguments={"symbol": "NIFTY 50", "exchange": "NSE"})
+        ToolCall(id="1", name="get_quote", arguments={"symbol": "NIFTY 50", "unexpected_arg": "oops"})
     )
 
     assert "error" in result

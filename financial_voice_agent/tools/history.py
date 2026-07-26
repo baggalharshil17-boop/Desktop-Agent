@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from financial_voice_agent import mock
+from financial_voice_agent.tools.instruments import get_instrument_token
 from financial_voice_agent.tools.kite_client import kite_get
 
 
@@ -13,17 +14,26 @@ async def get_ohlc_history(
     http_client,
     mode: str = "live",
     fixtures_dir: str = "fixtures",
+    exchange: str = "NSE",
+    instrument_cache: dict | None = None,
 ) -> dict:
     if mode == "mock":
         data = mock.load_fixture("ohlc_history", fixtures_dir=fixtures_dir)
         return {"symbol": data["symbol"], "interval": data["interval"], "candles": data["candles"]}
-    # NOTE: field mapping below is written from general knowledge of Kite
-    # Connect's GET /instruments/historical response shape (a list of
-    # [timestamp, open, high, low, close, volume] arrays per candle) -- verify
-    # against kite.trade/docs/connect/v3 when ready to go live.
+    # Kite's historical-candles endpoint takes a numeric instrument_token in
+    # the URL path, not the trading symbol -- there's no per-symbol lookup
+    # endpoint, only a full instrument dump to search (confirmed against
+    # kite.trade/docs/connect/v3/market-data-and-instruments). instrument_cache
+    # should be one dict shared across calls for the process's lifetime (see
+    # tools/registry.py's make_tool_executor) so the (large) dump is fetched
+    # once, not per call.
+    instrument_token = await get_instrument_token(
+        symbol, http_client=http_client, cache=instrument_cache if instrument_cache is not None else {},
+        exchange=exchange,
+    )
     raw = await kite_get(
         http_client,
-        f"/instruments/historical/{symbol}/{interval}",
+        f"/instruments/historical/{instrument_token}/{interval}",
         params={"from": from_date, "to": to_date},
     )
     candles = [

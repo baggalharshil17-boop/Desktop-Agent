@@ -47,7 +47,10 @@ async def create_http_clients(config: Config) -> HTTPClients:
     else:
         raise ValueError(f"Unsupported tts_provider: {config.tts_provider!r}")
 
-    kite_headers = {}
+    # X-Kite-Version is required by Kite Connect v3 (confirmed against
+    # kite.trade/docs/connect/v3) -- every real Kite Connect client (e.g.
+    # pykiteconnect) sends this on every request.
+    kite_headers = {"X-Kite-Version": "3"}
     if config.kite_api_key and config.kite_access_token:
         kite_headers["Authorization"] = f"token {config.kite_api_key}:{config.kite_access_token}"
     kite = httpx.AsyncClient(

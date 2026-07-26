@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 from financial_voice_agent.orchestrator.llm import ToolCall
 from financial_voice_agent.tools.history import get_ohlc_history
 from financial_voice_agent.tools.indicators import InsufficientDataError, compute_indicator
+from financial_voice_agent.tools.instruments import InstrumentNotFoundError
 from financial_voice_agent.tools.kite_client import (
     KiteRateLimitedError,
     KiteSessionExpiredError,
@@ -108,18 +109,26 @@ TOOLS_SCHEMA = [
 ]
 
 
-async def _dispatch(call: ToolCall, config, http_clients) -> dict:
+async def _dispatch(call: ToolCall, config, http_clients, instrument_cache: dict) -> dict:
     if call.name == "get_quote":
         return await get_quote(
             **call.arguments, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
         )
     if call.name == "get_ohlc_history":
         return await get_ohlc_history(
-            **call.arguments, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
+            **call.arguments,
+            http_client=http_clients.kite,
+            mode=config.mode,
+            fixtures_dir=_FIXTURES_DIR,
+            instrument_cache=instrument_cache,
         )
     if call.name == "compute_indicator":
         history_fn = functools.partial(
-            get_ohlc_history, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
+            get_ohlc_history,
+            http_client=http_clients.kite,
+            mode=config.mode,
+            fixtures_dir=_FIXTURES_DIR,
+            instrument_cache=instrument_cache,
         )
         return await compute_indicator(**call.arguments, history_fn=history_fn)
     if call.name == "get_positions_holdings":
@@ -137,9 +146,15 @@ async def _dispatch(call: ToolCall, config, http_clients) -> dict:
 
 
 def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[dict]]:
+    # Kite's instrument dump is meant to be fetched at most once a day (per
+    # Kite's own docs), so this cache is created once here and shared across
+    # every get_ohlc_history/compute_indicator call for this executor's
+    # lifetime, rather than re-fetched per tool call.
+    instrument_cache: dict[tuple[str, str], int] = {}
+
     async def executor(call: ToolCall) -> dict:
         try:
-            return await _dispatch(call, config, http_clients)
+            return await _dispatch(call, config, http_clients, instrument_cache)
         except KiteSessionExpiredError:
             return {"error": "Kite session expired, please log in again"}
         except KiteRateLimitedError:
@@ -147,6 +162,8 @@ def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[d
         except KiteUnavailableError:
             return {"error": "Kite Connect is temporarily unavailable"}
         except InsufficientDataError as exc:
+            return {"error": str(exc)}
+        except InstrumentNotFoundError as exc:
             return {"error": str(exc)}
         except WindowNotFoundError:
             return {"error": "Could not find the Kite window on screen"}

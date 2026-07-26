@@ -139,3 +139,14 @@ async def test_kite_client_has_no_auth_header_when_credentials_absent():
         assert "Authorization" not in clients.kite.headers
     finally:
         await close_http_clients(clients)
+
+
+@pytest.mark.asyncio
+async def test_kite_client_sends_x_kite_version_header():
+    config = _make_config()
+
+    clients = await create_http_clients(config)
+    try:
+        assert clients.kite.headers["X-Kite-Version"] == "3"
+    finally:
+        await close_http_clients(clients)

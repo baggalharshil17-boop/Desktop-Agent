@@ -51,6 +51,41 @@ async def test_get_quote_live_mode_calls_kite_get_and_normalizes():
 
 
 @pytest.mark.asyncio
+async def test_get_quote_live_mode_prepends_nse_exchange_for_bare_symbol():
+    # The tool schema tells the LLM to pass bare symbols like "RELIANCE"
+    # (no exchange prefix) -- Kite's /quote rejects that with a 403 unless
+    # it's sent as "exchange:tradingsymbol".
+    class _FakeHttpClient:
+        def __init__(self):
+            self.received_params = None
+
+        async def get(self, path, params=None):
+            self.received_params = params
+
+            class _Resp:
+                status_code = 200
+                def json(self):
+                    return {
+                        "data": {
+                            "NSE:CAPLIPOINT": {
+                                "last_price": 2500.0,
+                                "ohlc": {"open": 2480.0, "high": 2510.0, "low": 2470.0},
+                                "volume": 100000,
+                            }
+                        }
+                    }
+                def raise_for_status(self):
+                    pass
+            return _Resp()
+
+    client = _FakeHttpClient()
+    result = await get_quote("CAPLIPOINT", http_client=client, mode="live")
+
+    assert client.received_params == {"i": "NSE:CAPLIPOINT"}
+    assert result["last_price"] == 2500.0
+
+
+@pytest.mark.asyncio
 async def test_get_quote_live_mode_propagates_session_expired():
     class _FakeHttpClient:
         async def get(self, path, params=None):
