@@ -8,6 +8,7 @@ import yaml
 from dotenv import dotenv_values
 
 _VALID_TTS_PROVIDERS = {"cartesia", "deepgram"}
+_VALID_STT_PROVIDERS = {"groq", "huggingface"}
 _PLACEHOLDER_RE = re.compile(r"^<.*>$")
 
 
@@ -23,12 +24,15 @@ class Config:
     audio_output_device_index: int | None
     input_mode: str
     tts_provider: str
+    stt_provider: str
+    stt_model: str
     llm_model: str
     storage_db_path: str
     mode: str
     groq_api_key: str
     cartesia_api_key: str | None
     deepgram_api_key: str | None
+    huggingface_api_key: str | None
     kite_api_key: str | None
     kite_access_token: str | None
     tavily_api_key: str | None
@@ -41,6 +45,7 @@ def _load_env(env_path: str) -> dict[str, str]:
         "GROQ_API_KEY",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
+        "HUGGINGFACE_API_KEY",
         "KITE_API_KEY",
         "KITE_ACCESS_TOKEN",
         "TAVILY_API_KEY",
@@ -85,6 +90,17 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
                 "set it to a real Groq model id from console.groq.com/docs/models"
             )
 
+        stt_provider = raw["stt"]["provider"]
+        if stt_provider not in _VALID_STT_PROVIDERS:
+            raise ConfigError(
+                f"stt.provider must be 'groq' or 'huggingface', got {stt_provider!r}"
+            )
+        stt_model = raw["stt"]["model"]
+
+        huggingface_api_key = env.get("HUGGINGFACE_API_KEY")
+        if stt_provider == "huggingface" and not huggingface_api_key:
+            raise ConfigError("stt.provider is 'huggingface' but HUGGINGFACE_API_KEY is not set")
+
         config = Config(
             vad_speech_threshold=raw["vad"]["speech_threshold"],
             vad_silence_duration_ms=raw["vad"]["silence_duration_ms"],
@@ -92,12 +108,15 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             audio_output_device_index=raw["audio"]["output_device_index"],
             input_mode=raw["input_mode"],
             tts_provider=tts_provider,
+            stt_provider=stt_provider,
+            stt_model=stt_model,
             llm_model=llm_model,
             storage_db_path=raw["storage"]["db_path"],
             mode=raw["mode"],
             groq_api_key=groq_api_key,
             cartesia_api_key=cartesia_api_key,
             deepgram_api_key=deepgram_api_key,
+            huggingface_api_key=huggingface_api_key,
             kite_api_key=env.get("KITE_API_KEY"),
             kite_access_token=env.get("KITE_ACCESS_TOKEN"),
             tavily_api_key=env.get("TAVILY_API_KEY"),

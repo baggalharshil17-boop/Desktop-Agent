@@ -10,6 +10,10 @@ input_mode: "always_on"  # or "ptt"
 tts:
   provider: "cartesia"  # or "deepgram"
 
+stt:
+  provider: "huggingface"  # or "groq" -- switch to "groq" once you have Groq credits
+  model: "openai/whisper-large-v3"  # Hugging Face model id, or a Groq Whisper model id when provider is "groq"
+
 llm:
   model: "<check console.groq.com/docs/models>"  # treat as config, not constant
 

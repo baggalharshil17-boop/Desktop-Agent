@@ -28,6 +28,9 @@ VALID_YAML = """\
     input_mode: "always_on"
     tts:
       provider: "cartesia"
+    stt:
+      provider: "groq"
+      model: "test-stt-model"
     llm:
       model: "test-model"
     storage:
@@ -57,6 +60,8 @@ def test_load_config_reads_yaml_and_env(tmp_path, monkeypatch):
     assert config.audio_output_device_index is None
     assert config.input_mode == "always_on"
     assert config.tts_provider == "cartesia"
+    assert config.stt_provider == "groq"
+    assert config.stt_model == "test-stt-model"
     assert config.llm_model == "test-model"
     assert config.storage_db_path == "./agent_turns.db"
     assert config.mode == "live"
@@ -111,6 +116,108 @@ def test_load_config_invalid_tts_provider_raises(tmp_path, monkeypatch):
 
     with pytest.raises(ConfigError, match="elevenlabs"):
         load_config(config_path=yaml_path, env_path=env_path)
+
+
+def test_load_config_invalid_stt_provider_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+        input_mode: "always_on"
+        tts:
+          provider: "cartesia"
+        stt:
+          provider: "whisper-cpp"
+          model: "test-stt-model"
+        llm:
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n")
+
+    with pytest.raises(ConfigError, match="whisper-cpp"):
+        load_config(config_path=yaml_path, env_path=env_path)
+
+
+def test_load_config_missing_huggingface_key_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+        input_mode: "always_on"
+        tts:
+          provider: "cartesia"
+        stt:
+          provider: "huggingface"
+          model: "openai/whisper-large-v3"
+        llm:
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n")
+
+    with pytest.raises(ConfigError, match="HUGGINGFACE_API_KEY"):
+        load_config(config_path=yaml_path, env_path=env_path)
+
+
+def test_load_config_huggingface_stt_provider_reads_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+        input_mode: "always_on"
+        tts:
+          provider: "cartesia"
+        stt:
+          provider: "huggingface"
+          model: "openai/whisper-large-v3"
+        llm:
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(
+        tmp_path,
+        """\
+        GROQ_API_KEY=groq-secret
+        CARTESIA_API_KEY=cartesia-secret
+        HUGGINGFACE_API_KEY=hf-secret
+        """,
+    )
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.stt_provider == "huggingface"
+    assert config.stt_model == "openai/whisper-large-v3"
+    assert config.huggingface_api_key == "hf-secret"
 
 
 def test_load_config_missing_yaml_file_raises_config_error(tmp_path, monkeypatch):
