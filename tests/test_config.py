@@ -120,7 +120,7 @@ def test_load_config_invalid_tts_provider_raises(tmp_path, monkeypatch):
 
 def test_load_config_invalid_stt_provider_raises(tmp_path, monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
     yaml_path = _write_yaml(
         tmp_path,
         """\
@@ -151,7 +151,7 @@ def test_load_config_invalid_stt_provider_raises(tmp_path, monkeypatch):
 
 def test_load_config_missing_huggingface_key_raises(tmp_path, monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
     yaml_path = _write_yaml(
         tmp_path,
         """\
@@ -176,7 +176,7 @@ def test_load_config_missing_huggingface_key_raises(tmp_path, monkeypatch):
     )
     env_path = _write_env(tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n")
 
-    with pytest.raises(ConfigError, match="HUGGINGFACE_API_KEY"):
+    with pytest.raises(ConfigError, match="HF_TOKEN"):
         load_config(config_path=yaml_path, env_path=env_path)
 
 
@@ -209,7 +209,7 @@ def test_load_config_huggingface_stt_provider_reads_key(tmp_path, monkeypatch):
         """\
         GROQ_API_KEY=groq-secret
         CARTESIA_API_KEY=cartesia-secret
-        HUGGINGFACE_API_KEY=hf-secret
+        HF_TOKEN=hf-secret
         """,
     )
 

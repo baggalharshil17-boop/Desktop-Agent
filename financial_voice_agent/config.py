@@ -45,7 +45,7 @@ def _load_env(env_path: str) -> dict[str, str]:
         "GROQ_API_KEY",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
-        "HUGGINGFACE_API_KEY",
+        "HF_TOKEN",
         "KITE_API_KEY",
         "KITE_ACCESS_TOKEN",
         "TAVILY_API_KEY",
@@ -97,9 +97,9 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             )
         stt_model = raw["stt"]["model"]
 
-        huggingface_api_key = env.get("HUGGINGFACE_API_KEY")
+        huggingface_api_key = env.get("HF_TOKEN")
         if stt_provider == "huggingface" and not huggingface_api_key:
-            raise ConfigError("stt.provider is 'huggingface' but HUGGINGFACE_API_KEY is not set")
+            raise ConfigError("stt.provider is 'huggingface' but HF_TOKEN is not set")
 
         config = Config(
             vad_speech_threshold=raw["vad"]["speech_threshold"],

@@ -79,89 +79,70 @@ async def test_real_groq_stt_client_calls_transcriptions_create_with_wav_bytes()
     assert transcriptions.received_kwargs["file"][1] == b"wav-bytes"
 
 
-class _FakeHfResponse:
-    def __init__(self, json_data: dict):
-        self._json_data = json_data
-        self.raise_for_status_called = False
-
-    def raise_for_status(self):
-        self.raise_for_status_called = True
-
-    def json(self):
-        return self._json_data
+class _FakeAsrOutput:
+    def __init__(self, text: str):
+        self.text = text
 
 
-class _FakeHfHttpClient:
-    def __init__(self, response: _FakeHfResponse):
-        self._response = response
-        self.received_path = None
-        self.received_content = None
-        self.received_headers = None
+class _FakeHfInferenceClient:
+    def __init__(self, output):
+        self._output = output
+        self.received_audio = None
+        self.received_model = None
 
-    async def post(self, path, *, content=None, headers=None):
-        self.received_path = path
-        self.received_content = content
-        self.received_headers = headers
-        return self._response
+    async def automatic_speech_recognition(self, audio, *, model=None):
+        self.received_audio = audio
+        self.received_model = model
+        return self._output
 
 
 @pytest.mark.asyncio
-async def test_huggingface_stt_client_calls_models_endpoint_with_wav_bytes():
-    response = _FakeHfResponse({"text": "hf transcribed text"})
-    http_client = _FakeHfHttpClient(response)
-    adapter = HuggingFaceSttClient(http_client)
+async def test_huggingface_stt_client_calls_automatic_speech_recognition_with_wav_bytes():
+    client = _FakeHfInferenceClient(_FakeAsrOutput("hf transcribed text"))
+    adapter = HuggingFaceSttClient(client)
 
-    result = await adapter.transcribe(b"wav-bytes", model="openai/whisper-large-v3")
+    result = await adapter.transcribe(b"wav-bytes", model="openai/whisper-large-v3-turbo")
 
     assert result == "hf transcribed text"
-    assert http_client.received_path == "/models/openai/whisper-large-v3"
-    assert http_client.received_content == b"wav-bytes"
-    assert http_client.received_headers["Content-Type"] == "audio/wav"
-    assert response.raise_for_status_called is True
+    assert client.received_audio == b"wav-bytes"
+    assert client.received_model == "openai/whisper-large-v3-turbo"
 
 
 @pytest.mark.asyncio
-async def test_huggingface_stt_client_raises_sttexception_on_unexpected_response_shape():
-    # Mirrors HF's real "model is loading" cold-start response shape.
-    response = _FakeHfResponse({"error": "Model is currently loading", "estimated_time": 20.0})
-    adapter = HuggingFaceSttClient(_FakeHfHttpClient(response))
+async def test_huggingface_stt_client_handles_plain_string_output():
+    client = _FakeHfInferenceClient("hf transcribed text")
+    adapter = HuggingFaceSttClient(client)
 
-    with pytest.raises(SttError, match="unexpected response shape"):
-        await adapter.transcribe(b"wav-bytes", model="openai/whisper-large-v3")
+    result = await adapter.transcribe(b"wav-bytes", model="openai/whisper-large-v3-turbo")
+
+    assert result == "hf transcribed text"
 
 
 class _FakeConfig:
-    def __init__(self, stt_provider: str, groq_api_key: str = "groq-secret"):
+    def __init__(self, stt_provider: str, groq_api_key: str = "groq-secret", huggingface_api_key: str = "hf-secret"):
         self.stt_provider = stt_provider
         self.groq_api_key = groq_api_key
-
-
-class _FakeHttpClients:
-    def __init__(self, huggingface=None):
-        self.huggingface = huggingface
+        self.huggingface_api_key = huggingface_api_key
 
 
 def test_make_stt_client_returns_huggingface_client_for_huggingface_provider():
     config = _FakeConfig(stt_provider="huggingface")
-    http_clients = _FakeHttpClients(huggingface="fake-hf-http-client")
 
-    client = make_stt_client(config, http_clients)
+    client = make_stt_client(config)
 
     assert isinstance(client, HuggingFaceSttClient)
 
 
 def test_make_stt_client_returns_groq_client_for_groq_provider():
     config = _FakeConfig(stt_provider="groq")
-    http_clients = _FakeHttpClients()
 
-    client = make_stt_client(config, http_clients)
+    client = make_stt_client(config)
 
     assert isinstance(client, RealGroqSttClient)
 
 
 def test_make_stt_client_raises_for_unknown_provider():
     config = _FakeConfig(stt_provider="whisper-cpp")
-    http_clients = _FakeHttpClients()
 
     with pytest.raises(ValueError, match="whisper-cpp"):
-        make_stt_client(config, http_clients)
+        make_stt_client(config)

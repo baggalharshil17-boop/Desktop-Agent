@@ -9,7 +9,6 @@ def _make_config(
     tts_provider="cartesia",
     kite_api_key="kite-key",
     kite_access_token="kite-token",
-    huggingface_api_key="hf-secret",
 ) -> Config:
     return Config(
         vad_speech_threshold=0.5,
@@ -26,7 +25,7 @@ def _make_config(
         groq_api_key="groq-secret",
         cartesia_api_key="cartesia-secret",
         deepgram_api_key="deepgram-secret",
-        huggingface_api_key=huggingface_api_key,
+        huggingface_api_key="hf-secret",
         kite_api_key=kite_api_key,
         kite_access_token=kite_access_token,
         tavily_api_key="tavily-key",
@@ -42,13 +41,12 @@ async def test_create_http_clients_returns_one_client_per_vendor():
         assert isinstance(clients, HTTPClients)
         assert isinstance(clients.groq, httpx.AsyncClient)
         assert isinstance(clients.tts, httpx.AsyncClient)
-        assert isinstance(clients.huggingface, httpx.AsyncClient)
         assert isinstance(clients.kite, httpx.AsyncClient)
         assert isinstance(clients.tavily, httpx.AsyncClient)
         # Each vendor gets a distinct client instance (no accidental sharing).
         assert len({
-            id(clients.groq), id(clients.tts), id(clients.huggingface), id(clients.kite), id(clients.tavily)
-        }) == 5
+            id(clients.groq), id(clients.tts), id(clients.kite), id(clients.tavily)
+        }) == 4
     finally:
         await close_http_clients(clients)
 
@@ -95,7 +93,6 @@ async def test_close_http_clients_closes_all():
 
     assert clients.groq.is_closed
     assert clients.tts.is_closed
-    assert clients.huggingface.is_closed
     assert clients.kite.is_closed
     assert clients.tavily.is_closed
 
@@ -116,40 +113,6 @@ async def test_groq_client_has_extended_timeout():
     try:
         assert clients.groq.timeout.read == 30.0
         assert clients.groq.timeout.connect == 10.0
-    finally:
-        await close_http_clients(clients)
-
-
-@pytest.mark.asyncio
-async def test_huggingface_client_carries_auth_header():
-    config = _make_config(huggingface_api_key="hf-secret")
-
-    clients = await create_http_clients(config)
-    try:
-        assert clients.huggingface.headers["Authorization"] == "Bearer hf-secret"
-    finally:
-        await close_http_clients(clients)
-
-
-@pytest.mark.asyncio
-async def test_huggingface_client_has_no_auth_header_value_when_key_absent():
-    config = _make_config(huggingface_api_key=None)
-
-    clients = await create_http_clients(config)
-    try:
-        assert clients.huggingface.headers["Authorization"] == "Bearer "
-    finally:
-        await close_http_clients(clients)
-
-
-@pytest.mark.asyncio
-async def test_huggingface_client_has_extended_timeout():
-    config = _make_config()
-
-    clients = await create_http_clients(config)
-    try:
-        assert clients.huggingface.timeout.read == 30.0
-        assert clients.huggingface.timeout.connect == 10.0
     finally:
         await close_http_clients(clients)
 

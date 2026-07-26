@@ -2,6 +2,7 @@ pyyaml
 python-dotenv
 httpx
 groq
+huggingface_hub
 pytest
 pytest-asyncio
 numpy

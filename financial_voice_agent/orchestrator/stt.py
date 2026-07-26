@@ -57,42 +57,38 @@ class RealGroqSttClient:
 
 
 class HuggingFaceSttClient:
-    """Thin adapter around Hugging Face's serverless Inference API -- usable
+    """Thin adapter around huggingface_hub's AsyncInferenceClient -- usable
     as a Groq alternative while developing without Groq credits. Switch back
     via config.yaml's stt.provider key (see make_stt_client() below).
 
-    Verify against huggingface.co/docs/api-inference at build time. Known
-    quirk: a cold-started model can return a 503 with a JSON body like
-    {"error": "... is currently loading", "estimated_time": ...} instead of
-    a transcription -- this can take longer to clear than
-    transcribe_with_retry's default 3-attempt/1s-backoff policy covers, so a
-    cold HF endpoint may still surface as SttError on the first real call.
-    Not verified against a live HF endpoint in this environment (no API key
-    configured yet).
+    Verify against huggingface_hub's current docs/version at build time --
+    this project's Groq/Cartesia adapters have both needed correction once
+    against the real installed SDK. Known quirk: a cold-started model on the
+    "hf-inference" provider can be slow or raise on first use while it spins
+    up -- this can take longer to clear than transcribe_with_retry's default
+    3-attempt/1s-backoff policy covers, so a cold HF endpoint may still
+    surface as SttError on the first real call.
     """
 
-    def __init__(self, http_client) -> None:
-        self._client = http_client
+    def __init__(self, client) -> None:
+        self._client = client  # a huggingface_hub.AsyncInferenceClient
 
     async def transcribe(self, wav_bytes: bytes, *, model: str) -> str:
-        response = await self._client.post(
-            f"/models/{model}",
-            content=wav_bytes,
-            headers={"Content-Type": "audio/wav"},
-        )
-        response.raise_for_status()
-        data = response.json()
-        if "text" not in data:
-            raise SttError(f"Hugging Face inference returned an unexpected response shape: {data}")
-        return data["text"]
+        output = await self._client.automatic_speech_recognition(wav_bytes, model=model)
+        return output if isinstance(output, str) else output.text
 
 
-def make_stt_client(config, http_clients) -> SttClient:
+def make_stt_client(config) -> SttClient:
     """Picks the real STT adapter based on config.stt_provider -- the seam
     that lets stt.provider in config.yaml switch between Groq and Hugging
-    Face without touching any calling code."""
+    Face without touching any calling code. Both vendor SDKs manage their
+    own HTTP transport, so no shared HTTPClients are needed here."""
     if config.stt_provider == "huggingface":
-        return HuggingFaceSttClient(http_clients.huggingface)
+        from huggingface_hub import AsyncInferenceClient
+
+        return HuggingFaceSttClient(
+            AsyncInferenceClient(provider="hf-inference", api_key=config.huggingface_api_key)
+        )
     if config.stt_provider == "groq":
         return RealGroqSttClient(groq.AsyncGroq(api_key=config.groq_api_key))
     raise ValueError(f"Unsupported stt_provider: {config.stt_provider!r}")
