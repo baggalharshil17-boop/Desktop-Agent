@@ -155,6 +155,14 @@ class RealGroqLlmClient:
     """Thin adapter around groq.AsyncGroq's chat.completions.create.
 
     Verify against console.groq.com/docs/api-reference at build time.
+
+    Qwen and gpt-oss models on Groq default to an extended "thinking mode"
+    that can add tens of seconds of reasoning-token latency per call
+    (confirmed live: a single get_news turn took 45s of LLM time with
+    qwen/qwen3.6-27b's default reasoning_effort). reasoning_effort="none"
+    disables it -- per console.groq.com/docs/reasoning, this parameter is
+    specific to Qwen/gpt-oss models, so it's only sent for those to avoid
+    a 400 from models that don't recognize it.
     """
 
     def __init__(self, groq_async_client) -> None:
@@ -163,11 +171,15 @@ class RealGroqLlmClient:
     async def complete(
         self, messages: list[dict], *, model: str, tools_schema: list[dict]
     ) -> LlmCompletion:
+        extra_kwargs = {}
+        if "qwen" in model.lower() or "gpt-oss" in model.lower():
+            extra_kwargs["reasoning_effort"] = "none"
         response = await self._client.chat.completions.create(
             messages=messages,
             model=model,
             tools=tools_schema or None,
             tool_choice="auto" if tools_schema else None,
+            **extra_kwargs,
         )
         message = response.choices[0].message
         raw_tool_calls = message.tool_calls or []

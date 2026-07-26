@@ -205,6 +205,36 @@ async def test_real_groq_llm_client_calls_chat_completions_create():
     assert result.text is None
     assert result.tool_calls == [ToolCall(id="call_1", name="get_quote", arguments={"symbol": "NIFTY 50"})]
     assert completions.received_kwargs["model"] == "test-model"
+    assert "reasoning_effort" not in completions.received_kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["qwen/qwen3.6-27b", "openai/gpt-oss-120b"])
+async def test_real_groq_llm_client_disables_reasoning_for_qwen_and_gpt_oss_models(model):
+    class _FakeCompletionsResource:
+        def __init__(self):
+            self.received_kwargs = None
+
+        async def create(self, **kwargs):
+            self.received_kwargs = kwargs
+            message = type("M", (), {"content": "ok", "tool_calls": None})()
+            choice = type("C", (), {"message": message})()
+            return type("R", (), {"choices": [choice]})()
+
+    class _FakeChatNamespace:
+        def __init__(self, completions):
+            self.completions = completions
+
+    class _FakeGroqAsyncClient:
+        def __init__(self, completions):
+            self.chat = _FakeChatNamespace(completions)
+
+    completions = _FakeCompletionsResource()
+    adapter = RealGroqLlmClient(_FakeGroqAsyncClient(completions))
+
+    await adapter.complete([{"role": "user", "content": "hi"}], model=model, tools_schema=[])
+
+    assert completions.received_kwargs["reasoning_effort"] == "none"
 
 
 class _MessageCapturingClient:
