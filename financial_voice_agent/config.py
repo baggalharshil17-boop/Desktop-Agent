@@ -25,6 +25,7 @@ class Config:
     audio_output_device_index: int | None
     input_mode: str
     tts_provider: str
+    cartesia_voice_id: str | None
     stt_provider: str
     stt_model: str
     llm_provider: str
@@ -83,6 +84,15 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
         if tts_provider == "deepgram" and not deepgram_api_key:
             raise ConfigError("tts.provider is 'deepgram' but DEEPGRAM_API_KEY is not set")
 
+        cartesia_voice_id = raw.get("tts", {}).get("voice_id")
+        if tts_provider == "cartesia" and (
+            not cartesia_voice_id or _PLACEHOLDER_RE.match(cartesia_voice_id)
+        ):
+            raise ConfigError(
+                "tts.provider is 'cartesia' but tts.voice_id in config.yaml is not set "
+                "(still a placeholder) — pick a voice id from Cartesia's voice library"
+            )
+
         stt_provider = raw["stt"]["provider"]
         if stt_provider not in _VALID_STT_PROVIDERS:
             raise ConfigError(
@@ -114,6 +124,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             audio_output_device_index=raw["audio"]["output_device_index"],
             input_mode=raw["input_mode"],
             tts_provider=tts_provider,
+            cartesia_voice_id=cartesia_voice_id,
             stt_provider=stt_provider,
             stt_model=stt_model,
             llm_provider=llm_provider,
