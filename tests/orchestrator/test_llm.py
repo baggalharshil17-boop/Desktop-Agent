@@ -91,6 +91,10 @@ async def test_run_llm_turn_fires_on_tool_call_started_once_and_awaits_it_before
         await asyncio.sleep(0.01)
         ack_finished = True
 
+    async def slow_tool_executor(call: ToolCall) -> dict:
+        await asyncio.sleep(0.05)
+        return {"ltp": 24500}
+
     class _TwoRoundToolCallClient:
         def __init__(self):
             self.round = 0
@@ -106,12 +110,12 @@ async def test_run_llm_turn_fires_on_tool_call_started_once_and_awaits_it_before
 
     result = await run_llm_turn(
         _TwoRoundToolCallClient(), "transcript", [],
-        model="test-model", tools_schema=[], tool_executor=_tool_executor,
-        max_tool_rounds=3, on_tool_call_started=on_tool_call_started,
+        model="test-model", tools_schema=[], tool_executor=slow_tool_executor,
+        max_tool_rounds=3, on_tool_call_started=on_tool_call_started, ack_delay_seconds=0.01,
     )
 
     assert result.response_text == "done"
-    # Fired once even though two rounds of tool calls happened.
+    # Fired once even though two rounds of (slow) tool calls happened.
     assert ack_calls == 1
     # run_llm_turn must join the ack task before returning, so a caller
     # never starts playing the real response while the ack is still
@@ -121,16 +125,68 @@ async def test_run_llm_turn_fires_on_tool_call_started_once_and_awaits_it_before
 
 @pytest.mark.asyncio
 async def test_run_llm_turn_swallows_on_tool_call_started_failures():
+    ack_was_called = False
+
     async def failing_ack():
+        nonlocal ack_was_called
+        ack_was_called = True
         raise RuntimeError("TTS unavailable")
+
+    async def slow_tool_executor(call: ToolCall) -> dict:
+        await asyncio.sleep(0.05)
+        return {"ltp": 24500}
+
+    result = await run_llm_turn(
+        _OneRoundToolCallClient(), "what's the nifty level", [],
+        model="test-model", tools_schema=[], tool_executor=slow_tool_executor,
+        on_tool_call_started=failing_ack, ack_delay_seconds=0.01,
+    )
+
+    assert ack_was_called is True
+    assert result.response_text == "Nifty is at 24500."
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_skips_ack_for_tools_faster_than_the_delay():
+    # get_quote/capture_screen resolve in well under 100ms live -- acking
+    # every one of those made the agent sound repetitive. A tool that beats
+    # ack_delay_seconds must never trigger the ack at all.
+    ack_calls = 0
+
+    async def on_tool_call_started():
+        nonlocal ack_calls
+        ack_calls += 1
 
     result = await run_llm_turn(
         _OneRoundToolCallClient(), "what's the nifty level", [],
         model="test-model", tools_schema=[], tool_executor=_tool_executor,
-        on_tool_call_started=failing_ack,
+        on_tool_call_started=on_tool_call_started, ack_delay_seconds=0.5,
     )
 
     assert result.response_text == "Nifty is at 24500."
+    assert ack_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_run_llm_turn_fires_ack_for_tools_slower_than_the_delay():
+    ack_calls = 0
+
+    async def on_tool_call_started():
+        nonlocal ack_calls
+        ack_calls += 1
+
+    async def slow_tool_executor(call: ToolCall) -> dict:
+        await asyncio.sleep(0.05)
+        return {"ltp": 24500}
+
+    result = await run_llm_turn(
+        _OneRoundToolCallClient(), "what's the nifty level", [],
+        model="test-model", tools_schema=[], tool_executor=slow_tool_executor,
+        on_tool_call_started=on_tool_call_started, ack_delay_seconds=0.01,
+    )
+
+    assert result.response_text == "Nifty is at 24500."
+    assert ack_calls == 1
 
 
 @pytest.mark.asyncio
@@ -189,11 +245,15 @@ async def test_run_llm_turn_joins_ack_task_even_when_loop_never_converges():
         await asyncio.sleep(0.01)
         ack_finished = True
 
+    async def slow_tool_executor(call: ToolCall) -> dict:
+        await asyncio.sleep(0.05)
+        return {"ltp": 24500}
+
     with pytest.raises(LlmError):
         await run_llm_turn(
             _NeverConvergesClient(), "transcript", [],
-            model="test-model", tools_schema=[], tool_executor=_tool_executor, max_tool_rounds=2,
-            on_tool_call_started=on_tool_call_started,
+            model="test-model", tools_schema=[], tool_executor=slow_tool_executor, max_tool_rounds=2,
+            on_tool_call_started=on_tool_call_started, ack_delay_seconds=0.01,
         )
 
     assert ack_finished is True

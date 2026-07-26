@@ -55,6 +55,7 @@ async def run_llm_turn(
     sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
     clock_fn: Callable[[], float] = time.monotonic,
     on_tool_call_started: Callable[[], Awaitable[None]] | None = None,
+    ack_delay_seconds: float = 0.6,
 ) -> LlmTurnResult:
     messages = list(history)
     if system_prompt is not None:
@@ -94,19 +95,29 @@ async def run_llm_turn(
                 }
             )
 
-            # Fire the "let me check that" ack once, in parallel with tool
-            # execution, rather than leaving the user in dead air while a
-            # slow tool (e.g. get_news's web search) runs. Not awaited here
-            # -- the outer finally joins it before this function returns or
-            # raises, so it always finishes before any later audio (a
-            # further round's ack, the final response, or a caller's error
-            # fallback) starts playing on the same output stream, without
-            # blocking the tool call on the ack's own playback time.
-            if on_tool_call_started is not None and ack_task is None:
-                ack_task = asyncio.ensure_future(on_tool_call_started())
-
             tool_start = clock_fn()
-            results = await asyncio.gather(*(tool_executor(call) for call in completion.tool_calls))
+            tool_call_task = asyncio.ensure_future(
+                asyncio.gather(*(tool_executor(call) for call in completion.tool_calls))
+            )
+
+            # Only speak the "let me check that" ack if the tool is actually
+            # slow -- most tools here (get_quote, capture_screen) resolve in
+            # well under 100ms, and acking every single one just makes the
+            # agent sound repetitive. Racing the tool against a short delay
+            # means fast tools never trigger it, while a genuinely slow one
+            # (e.g. get_news's web search, ~2.7s observed live) still gets
+            # an ack after ack_delay_seconds. Not awaited here -- the outer
+            # finally joins it before this function returns or raises, so it
+            # always finishes before any later audio (a further round's ack,
+            # the final response, or a caller's error fallback) starts
+            # playing on the same output stream, without blocking the tool
+            # call on the ack's own playback time.
+            if on_tool_call_started is not None and ack_task is None:
+                done, _ = await asyncio.wait({tool_call_task}, timeout=ack_delay_seconds)
+                if tool_call_task not in done:
+                    ack_task = asyncio.ensure_future(on_tool_call_started())
+
+            results = await tool_call_task
             total_tool_ms += round((clock_fn() - tool_start) * 1000)
             for call, result in zip(completion.tool_calls, results):
                 # capture_screen's result carries the actual image (image_b64/
