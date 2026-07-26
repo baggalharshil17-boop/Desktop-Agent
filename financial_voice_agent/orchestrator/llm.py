@@ -117,13 +117,13 @@ async def _complete_with_retry(
                     _attempt, max_attempts=4, base_delay_seconds=1.0, sleep_fn=sleep_fn
                 )
             except RetryExhaustedError as exc:
-                raise LlmError("Groq LLM rate limited repeatedly", rate_limited=True) from exc
+                raise LlmError("LLM rate limited repeatedly", rate_limited=True) from exc
         try:
             return await retry_with_fixed_backoff(
                 _attempt, max_attempts=2, backoff_seconds=1.0, sleep_fn=sleep_fn
             )
         except RetryExhaustedError as exc:
-            raise LlmError("Groq LLM failed after retries") from exc
+            raise LlmError("LLM failed after retries") from exc
 
 
 class RealGroqLlmClient:
@@ -151,3 +151,57 @@ class RealGroqLlmClient:
             for tc in raw_tool_calls
         ]
         return LlmCompletion(text=message.content, tool_calls=tool_calls)
+
+
+class HuggingFaceLlmClient:
+    """Thin adapter around huggingface_hub's AsyncInferenceClient.chat_completion,
+    which is OpenAI-compatible (same messages/tools/tool_calls shapes as Groq's
+    client) -- verified against the installed huggingface_hub SDK at build time.
+
+    Not every model/provider combination on HF Inference supports tool calling
+    reliably the way Groq's Llama models do -- verify with a real call before
+    trusting this in the live voice loop, and be ready to swap llm.model in
+    config.yaml if the configured model doesn't emit tool_calls correctly.
+    """
+
+    def __init__(self, client) -> None:
+        self._client = client  # a huggingface_hub.AsyncInferenceClient
+
+    async def complete(
+        self, messages: list[dict], *, model: str, tools_schema: list[dict]
+    ) -> LlmCompletion:
+        response = await self._client.chat_completion(
+            messages=messages,
+            model=model,
+            tools=tools_schema or None,
+            tool_choice="auto" if tools_schema else None,
+        )
+        message = response.choices[0].message
+        raw_tool_calls = message.tool_calls or []
+        tool_calls = [
+            ToolCall(id=tc.id, name=tc.function.name, arguments=json.loads(tc.function.arguments))
+            for tc in raw_tool_calls
+        ]
+        return LlmCompletion(text=message.content, tool_calls=tool_calls)
+
+
+def make_llm_client(config):
+    """Picks the real LLM adapter based on config.llm_provider -- the seam
+    that lets llm.provider in config.yaml switch between Groq and Hugging
+    Face without touching any calling code."""
+    if config.llm_provider == "huggingface":
+        from huggingface_hub import AsyncInferenceClient
+
+        # "hf-inference" (HF's own serverless infra, used for STT) does not
+        # serve most chat/tool-calling models -- "auto" routes to whichever
+        # of HF's partner Inference Providers (Together, Novita, Fireworks,
+        # etc.) actually hosts config.llm_model. Verified against a real call
+        # with meta-llama/Llama-3.3-70B-Instruct at build time.
+        return HuggingFaceLlmClient(
+            AsyncInferenceClient(provider="auto", api_key=config.huggingface_api_key)
+        )
+    if config.llm_provider == "groq":
+        import groq
+
+        return RealGroqLlmClient(groq.AsyncGroq(api_key=config.groq_api_key))
+    raise ValueError(f"Unsupported llm_provider: {config.llm_provider!r}")

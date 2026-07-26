@@ -15,7 +15,10 @@ stt:
   model: "openai/whisper-large-v3-turbo"  # Hugging Face model id, or a Groq Whisper model id when provider is "groq"
 
 llm:
-  model: "<check console.groq.com/docs/models>"  # treat as config, not constant
+  provider: "huggingface"  # or "groq" -- switch to "groq" once you have Groq credits
+  # Tool-calling support on HF Inference varies by model/provider -- verify this
+  # model actually emits tool_calls before trusting it in the live voice loop.
+  model: "meta-llama/Llama-3.3-70B-Instruct"
 
 storage:
   db_path: "./agent_turns.db"

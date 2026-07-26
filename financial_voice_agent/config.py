@@ -9,6 +9,7 @@ from dotenv import dotenv_values
 
 _VALID_TTS_PROVIDERS = {"cartesia", "deepgram"}
 _VALID_STT_PROVIDERS = {"groq", "huggingface"}
+_VALID_LLM_PROVIDERS = {"groq", "huggingface"}
 _PLACEHOLDER_RE = re.compile(r"^<.*>$")
 
 
@@ -26,10 +27,11 @@ class Config:
     tts_provider: str
     stt_provider: str
     stt_model: str
+    llm_provider: str
     llm_model: str
     storage_db_path: str
     mode: str
-    groq_api_key: str
+    groq_api_key: str | None
     cartesia_api_key: str | None
     deepgram_api_key: str | None
     huggingface_api_key: str | None
@@ -63,10 +65,8 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
         raise ConfigError(f"config file not found: {config_path}")
 
     env = _load_env(env_path)
-
     groq_api_key = env.get("GROQ_API_KEY")
-    if not groq_api_key:
-        raise ConfigError("Missing required environment variable: GROQ_API_KEY")
+    huggingface_api_key = env.get("HF_TOKEN")
 
     try:
         tts_provider = raw["tts"]["provider"]
@@ -83,13 +83,6 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
         if tts_provider == "deepgram" and not deepgram_api_key:
             raise ConfigError("tts.provider is 'deepgram' but DEEPGRAM_API_KEY is not set")
 
-        llm_model = raw["llm"]["model"]
-        if _PLACEHOLDER_RE.match(llm_model):
-            raise ConfigError(
-                f"llm.model in config.yaml is still a placeholder ({llm_model!r}) — "
-                "set it to a real Groq model id from console.groq.com/docs/models"
-            )
-
         stt_provider = raw["stt"]["provider"]
         if stt_provider not in _VALID_STT_PROVIDERS:
             raise ConfigError(
@@ -97,9 +90,22 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             )
         stt_model = raw["stt"]["model"]
 
-        huggingface_api_key = env.get("HF_TOKEN")
-        if stt_provider == "huggingface" and not huggingface_api_key:
-            raise ConfigError("stt.provider is 'huggingface' but HF_TOKEN is not set")
+        llm_provider = raw["llm"]["provider"]
+        if llm_provider not in _VALID_LLM_PROVIDERS:
+            raise ConfigError(
+                f"llm.provider must be 'groq' or 'huggingface', got {llm_provider!r}"
+            )
+        llm_model = raw["llm"]["model"]
+        if _PLACEHOLDER_RE.match(llm_model):
+            raise ConfigError(
+                f"llm.model in config.yaml is still a placeholder ({llm_model!r}) — "
+                "set it to a real model id"
+            )
+
+        if (stt_provider == "groq" or llm_provider == "groq") and not groq_api_key:
+            raise ConfigError("GROQ_API_KEY is not set, but stt.provider or llm.provider is 'groq'")
+        if (stt_provider == "huggingface" or llm_provider == "huggingface") and not huggingface_api_key:
+            raise ConfigError("HF_TOKEN is not set, but stt.provider or llm.provider is 'huggingface'")
 
         config = Config(
             vad_speech_threshold=raw["vad"]["speech_threshold"],
@@ -110,6 +116,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             tts_provider=tts_provider,
             stt_provider=stt_provider,
             stt_model=stt_model,
+            llm_provider=llm_provider,
             llm_model=llm_model,
             storage_db_path=raw["storage"]["db_path"],
             mode=raw["mode"],

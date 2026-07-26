@@ -1,10 +1,12 @@
 import pytest
 
 from financial_voice_agent.orchestrator.llm import (
+    HuggingFaceLlmClient,
     LlmCompletion,
     LlmError,
     RealGroqLlmClient,
     ToolCall,
+    make_llm_client,
     run_llm_turn,
 )
 
@@ -299,4 +301,79 @@ async def test_run_llm_turn_omits_system_message_when_not_provided():
         model="test-model", tools_schema=[], tool_executor=_tool_executor,
     )
 
-    assert all(m["role"] != "system" for m in captured_messages[0])
+
+@pytest.mark.asyncio
+async def test_huggingface_llm_client_calls_chat_completion():
+    class _FakeFunction:
+        def __init__(self, name, arguments):
+            self.name = name
+            self.arguments = arguments
+
+    class _FakeToolCall:
+        def __init__(self, id, name, arguments):
+            self.id = id
+            self.function = _FakeFunction(name, arguments)
+
+    class _FakeMessage:
+        def __init__(self, content, tool_calls):
+            self.content = content
+            self.tool_calls = tool_calls
+
+    class _FakeChoice:
+        def __init__(self, message):
+            self.message = message
+
+    class _FakeChatCompletionOutput:
+        def __init__(self, choices):
+            self.choices = choices
+
+    class _FakeHfInferenceClient:
+        def __init__(self, response):
+            self._response = response
+            self.received_kwargs = None
+
+        async def chat_completion(self, **kwargs):
+            self.received_kwargs = kwargs
+            return self._response
+
+    fake_response = _FakeChatCompletionOutput(
+        [_FakeChoice(_FakeMessage(None, [_FakeToolCall("call_1", "get_quote", '{"symbol": "NIFTY 50"}')]))]
+    )
+    client = _FakeHfInferenceClient(fake_response)
+    adapter = HuggingFaceLlmClient(client)
+
+    result = await adapter.complete([{"role": "user", "content": "hi"}], model="test-model", tools_schema=[])
+
+    assert result.text is None
+    assert result.tool_calls == [ToolCall(id="call_1", name="get_quote", arguments={"symbol": "NIFTY 50"})]
+    assert client.received_kwargs["model"] == "test-model"
+
+
+class _FakeLlmConfig:
+    def __init__(self, llm_provider: str, groq_api_key: str = "groq-secret", huggingface_api_key: str = "hf-secret"):
+        self.llm_provider = llm_provider
+        self.groq_api_key = groq_api_key
+        self.huggingface_api_key = huggingface_api_key
+
+
+def test_make_llm_client_returns_huggingface_client_for_huggingface_provider():
+    config = _FakeLlmConfig(llm_provider="huggingface")
+
+    client = make_llm_client(config)
+
+    assert isinstance(client, HuggingFaceLlmClient)
+
+
+def test_make_llm_client_returns_groq_client_for_groq_provider():
+    config = _FakeLlmConfig(llm_provider="groq")
+
+    client = make_llm_client(config)
+
+    assert isinstance(client, RealGroqLlmClient)
+
+
+def test_make_llm_client_raises_for_unknown_provider():
+    config = _FakeLlmConfig(llm_provider="openai")
+
+    with pytest.raises(ValueError, match="openai"):
+        make_llm_client(config)

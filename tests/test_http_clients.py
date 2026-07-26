@@ -19,6 +19,7 @@ def _make_config(
         tts_provider=tts_provider,
         stt_provider="huggingface",
         stt_model="openai/whisper-large-v3",
+        llm_provider="huggingface",
         llm_model="test-model",
         storage_db_path="./agent_turns.db",
         mode="live",

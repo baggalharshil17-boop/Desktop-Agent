@@ -3,6 +3,7 @@ python-dotenv
 httpx
 groq
 huggingface_hub
+kiteconnect
 pytest
 pytest-asyncio
 numpy
