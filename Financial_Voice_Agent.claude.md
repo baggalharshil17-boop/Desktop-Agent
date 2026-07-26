@@ -10,10 +10,12 @@ Read-only AI voice assistant for Zerodha Kite trading dashboard. Listens continu
 **v2.1 uses:** STT → LLM (tool calling) → TTS (cascaded HTTP). **Why:** vision is now on-demand (model-triggered), not continuous. Cascade buys observability, cost, simplicity. Trade-off: ~1–2.5s per turn instead of <500ms.
 
 **Model stack:**
-- Speech-to-text: Groq Whisper Large v3 Turbo (~$0.04/hour audio, ~228x RT)
-- Reasoning + tools + vision: Groq multimodal tool-calling model (check console.groq.com/docs/models — model catalog churns)
-- TTS: Cartesia Sonic (primary, ~40–90ms time-to-first-audio) or Deepgram Aura-2 (fallback, ~300ms)
+- Speech-to-text: Groq Whisper Large v3 Turbo (~$0.04/hour audio, ~228x RT), **or** Hugging Face Inference (`huggingface_hub.AsyncInferenceClient.automatic_speech_recognition`, provider `"hf-inference"`) — config-driven via `stt.provider`, built as a fallback for when one vendor's free credits run out
+- Reasoning + tools + vision: Groq multimodal tool-calling model (check console.groq.com/docs/models — model catalog churns), **or** Hugging Face Inference chat completions (`AsyncInferenceClient.chat_completion`, provider `"auto"` — `"hf-inference"` itself doesn't serve most chat/vision models, `"auto"` routes to whichever partner provider does) — config-driven via `llm.provider`. As of this build, `qwen/qwen3.6-27b` on Groq is the verified model supporting both tool calling and vision together; it defaults to an extended "thinking mode" that must be disabled via `reasoning_effort: "none"` (Qwen/gpt-oss-specific param) or every call costs tens of seconds of unwanted reasoning latency
+- TTS: Cartesia Sonic (primary, ~40–90ms time-to-first-audio) or Deepgram Aura-2 (fallback, ~300ms — **not implemented**, only Cartesia has a real adapter so far)
 - Tools: local Python functions, not MCP server (no need for v1)
+
+**Both STT and LLM providers are swappable per-vendor at runtime via config.yaml**, not hardcoded to Groq as originally scoped — see Configuration section below. This exists because free-tier credits on either vendor can run out mid-session; switching providers is a config edit plus a token, not a code change.
 
 ## Core Capabilities
 
@@ -54,7 +56,8 @@ Assume connection pooling per Section 14. Fresh TCP+TLS per call adds 100–300m
 
 **Screen capture → vision:**
 - mss captures cropped Kite window → JPEG (quality ~80) → base64 encode
-- Groq multimodal model: confirm inline base64 vs data-URI at build time
+- Sent as a `data:image/jpeg;base64,...` URI in an `image_url` content block, in a follow-up `user` message appended right after the tool-result message (tool-role message content must stay text-only per the OpenAI-compatible schema both Groq and HF use — the image can't ride inside the tool result itself)
+- Only works if `llm.model` is actually vision-capable — a text-only model will happily call `capture_screen` and then fabricate a description instead of erroring, since it has no way to know it can't see the attached image
 
 **Tool results to LLM:**
 - Concise structured text, not raw API dumps (Kite's raw JSON wastes tokens)
@@ -114,10 +117,14 @@ CREATE TABLE turns (
 
 | Call | Failure | Behavior |
 |------|---------|----------|
-| Groq STT/LLM | Timeout or 5xx | Retry 2x with 1s backoff. On final fail: speak "I didn't catch that, one moment", re-listen |
-| Groq LLM | 429 rate limit | Exponential backoff; speak "I've hit a usage limit — give me a second" |
-| Cartesia TTS | Timeout or 5xx | Retry once. Fall back to Deepgram (if configured) or logged error |
-| Kite Connect | 401/429/503 | Per-tool policy in tool table (Section 6) — spoken response differs by failure type |
+| STT (Groq/HF) | Timeout or 5xx | Retry 2x with 1s backoff. On final fail: speak a varied "didn't catch that" phrase (not the same wording every time), re-listen |
+| LLM (Groq/HF) | 429 rate limit | Exponential backoff; speak a varied "hit a usage limit" phrase |
+| LLM (Groq/HF) | Any other failure (with a transcript already in hand) | Speak a varied *generic*-failure phrase, distinct from the STT one — saying "didn't catch that" when STT actually succeeded is a lie the user will notice |
+| Cartesia TTS | Timeout or 5xx | Retry once. Fall back to Deepgram (if configured — **no Deepgram adapter built yet**) or logged error |
+| Kite Connect | 401, or 403 with `error_type: "TokenException"` | Both mean expired/invalid `access_token` — **confirmed live that Kite returns 403, not 401, for this** (`{"error_type":"TokenException","message":"Incorrect api_key or access_token."}`); code must check both status codes and the JSON body, not just status |
+| Kite Connect | 403 with `error_type: "PermissionException"` | Real account-level restriction (e.g. no active paid Kite Connect subscription for historical data) — **not** a token problem, must not be treated as "log in again"; surface the real message so the user knows to check their Zerodha subscription |
+| Kite Connect | 429/503 | Per-tool policy in tool table (Section 6) |
+| Any tool call | Any exception not specifically handled above | Must still become a `{"error": ...}` tool result the LLM can see and explain out loud in the same turn — an uncaught exception here crashes the whole turn and forces the generic fallback, which is worse than a slightly-generic spoken error |
 | Tavily | Timeout/error | Degrade gracefully: answer with other results, state search unavailable |
 
 ## Voice & Audio Design
@@ -134,33 +141,49 @@ CREATE TABLE turns (
 
 **Output device:** enumerate with `pyaudio.get_device_info_by_index()`, accept config key `audio.output_device_index`, fall back to OS default with warning.
 
-## System Prompt (Draft — Iterate After Real Usage)
+## System Prompt (Current — financial_voice_agent/orchestrator/system_prompt.py)
 
 ```
-You are a read-only voice assistant for a personal trading desk running Zerodha Kite. 
-Observe market data, positions, news — never place, modify, or cancel orders. 
-Speak in short, natural sentences meant to be heard. When calling a tool that takes time, 
-say brief acknowledgment first (e.g., "let me check that," "one sec, pulling the chart") 
-and vary phrasing. If query depends on screen content and you can't see it, call 
-capture_screen rather than guessing. If ambiguous about instrument/timeframe, ask. 
-Never speculate — retrieve from tools.
+You are a read-only voice assistant for a personal trading desk running Zerodha Kite.
+You observe market data, positions, and news — you never place, modify, or cancel orders,
+and you have no tool capable of doing so. Speak in short, natural sentences meant to be
+heard, not read. When you need to call a tool that will take a moment, say a brief natural
+acknowledgment first — e.g. "let me check that" or "one sec, pulling the chart" — and
+vary the phrasing so it doesn't sound scripted. If you cannot see the relevant instrument
+on screen and the query depends on what's currently visible, call capture_screen rather
+than guessing. If a query is ambiguous about which instrument or timeframe is meant, ask a
+short clarifying question instead of assuming. Never speculate about figures you have not
+retrieved from a tool in this turn. If a tool call returns an error, say so plainly and in
+plain language — e.g. "I couldn't pull that up, looks like a permissions issue on the Kite
+side" — rather than staying silent, giving up without explanation, or pretending it worked.
+Briefly suggest what the user could check or do next if it's obvious from the error.
 ```
+
+Note: the system prompt asking the model to speak an acknowledgment doesn't fully cover it —
+`run_llm_turn` has its own `on_tool_call_started` hook (see Concurrency Model) that fires a
+*separate*, code-driven ack independent of what the model says, and only for tools slower
+than `ack_delay_seconds` (default 0.6s). Fast tools (`get_quote`, `capture_screen`, <100ms
+live) never trigger it — acking every tool call made the agent sound repetitive in practice.
 
 **Persona constraints:**
-- Rotate acknowledgment phrases (track last 5 used, avoid repeats)
+- Rotate acknowledgment/fallback phrases (tracked against the last 5 spoken, not just a
+  fixed pool — applies to both the tool-call ack and the error-fallback messages)
 - No unsolicited trading advice
-- State unavailable data plainly, never invent numbers
+- State unavailable data plainly, never invent numbers — **in practice, weaker open models
+  will still sometimes fabricate specific figures (RSI values, moving averages, momentum %)
+  without calling a tool, despite this instruction; this is a known model-compliance gap,
+  not a deterministic bug, and is worse on some models/providers than others**
 
 ## Tool Inventory (All Read-Only)
 
 | Tool | Source | Returns | Notes |
 |------|--------|---------|-------|
-| `get_quote(symbol)` | Kite REST | LTP, day OHLC, volume | 401 → speak "session expired," exit. 429 → backoff. Stale → "data unavailable" |
-| `get_ohlc_history(symbol, interval, from, to)` | Kite REST | OHLC series | Expired options unsupported — state explicitly |
-| `compute_indicator(symbol, indicator, params)` | Local (pandas/numpy/ta) | Bollinger, Fibonacci, MA, RSI | Fails if insufficient candles — state this |
+| `get_quote(symbol)` | Kite REST `GET /quote` | LTP, day OHLC, volume | **`i` param must be `exchange:tradingsymbol` (e.g. `NSE:RELIANCE`), not a bare symbol — confirmed live, a bare symbol 403s.** The LLM only ever passes a bare symbol per the tool schema, so `get_quote` prepends `NSE:` itself when there's no colon. 401/403-TokenException → speak "session expired," exit. 429 → backoff. |
+| `get_ohlc_history(symbol, interval, from, to)` | Kite REST `GET /instruments/historical/:instrument_token/:interval` | OHLC series | **Takes a numeric `instrument_token` in the URL, not a trading symbol — confirmed live, there's no per-symbol lookup endpoint.** Resolved via `tools/instruments.py` against Kite's full instrument dump (`GET /instruments/:exchange`, gzipped CSV, one row per tradable instrument); cached in-process (created once in `make_tool_executor`, shared across calls) since Kite's own docs say the dump should be fetched at most once a day. **Historical data requires an active paid Kite Connect subscription — a 403 `PermissionException` ("Insufficient permission for that call") means the account isn't subscribed, not a code bug**; this is separate from a TokenException and must not be reported as "log in again." |
+| `compute_indicator(symbol, indicator, params)` | Local (pandas/numpy/ta) | Bollinger, Fibonacci, MA, RSI | Fails if insufficient candles — state this. Inherits `get_ohlc_history`'s instrument_token/subscription constraints above. |
 | `get_positions_holdings()` | Kite REST | Current holdings/positions | Never pass to `get_news` |
 | `get_news(query)` | Tavily API | Headlines + summaries | Degrade gracefully; never include account data in query |
-| `capture_screen()` | Local (mss + pygetwindow/AppKit) | base64 JPEG | "window not found" error if can't locate Kite |
+| `capture_screen()` | Local (mss + pygetwindow/AppKit) | base64 JPEG + file path | "window not found" error if can't locate Kite. The base64 is what actually lets the LLM see the screen (see Data Contracts) — the file path alone (the original v1 shape) only lets the model confirm a screenshot was taken, not describe it. |
 
 **Screen capture trigger:** Model calls `capture_screen` when it decides it needs visual context — no button, no polling, no staleness cap.
 
@@ -170,19 +193,20 @@ Never speculate — retrieve from tools.
 
 **Runtime:** Python 3.11+
 
-**APIs & SDKs:** groq (STT+LLM), cartesia (TTS) or deepgram-sdk, pyaudio, silero-vad, noisereduce, janus (thread-safe async queue — **critical for Section 11.2 bug**), mss, pygetwindow (Windows) / pyobjc-framework-Quartz (macOS), pandas, numpy, ta, httpx (reused per Section 14), sqlite3 (stdlib), pyyaml or python-dotenv
+**APIs & SDKs:** groq (STT+LLM) and/or huggingface_hub (config-driven alternative for both), cartesia (TTS) or deepgram-sdk (**not implemented**), pyaudio, silero-vad, noisereduce, janus (thread-safe async queue — **critical for Section 11.2 bug**), mss, pygetwindow (Windows) / pyobjc-framework-Quartz (macOS), pandas, numpy, ta, httpx (reused per Section 14), sqlite3 (stdlib), pyyaml or python-dotenv, kiteconnect (only used by `scripts/kite_login.py`'s one-off daily token exchange, not by the live agent itself, which speaks raw Kite REST via httpx)
 
 **HTTP client:** httpx.AsyncClient (one per vendor, created at startup, reused)
 
 ## Configuration (config.yaml + env vars)
 
-**Environment variables:**
-- `GROQ_API_KEY`
-- `CARTESIA_API_KEY` (or `DEEPGRAM_API_KEY` for fallback)
-- `KITE_API_KEY` / `KITE_ACCESS_TOKEN` (confirm read-only scope at Kite Connect app registration)
+**Environment variables (see `.env.example`):**
+- `GROQ_API_KEY` — required only if `stt.provider` or `llm.provider` is `"groq"`
+- `HF_TOKEN` — required only if `stt.provider` or `llm.provider` is `"huggingface"` (matches `huggingface_hub`'s own conventional env var name)
+- `CARTESIA_API_KEY` (or `DEEPGRAM_API_KEY` for fallback — **no Deepgram adapter built yet**, so this isn't currently usable)
+- `KITE_API_KEY` / `KITE_API_SECRET` / `KITE_ACCESS_TOKEN` (confirm read-only scope at Kite Connect app registration). `KITE_ACCESS_TOKEN` expires daily — regenerate it with `python scripts/kite_login.py`, which walks through the login flow and writes the fresh token into `.env` for you (requires `KITE_API_KEY`/`KITE_API_SECRET` already set)
 - `TAVILY_API_KEY`
 
-**config.yaml required keys:**
+**config.yaml required keys (current shape):**
 ```yaml
 vad:
   speech_threshold: 0.5
@@ -190,14 +214,24 @@ vad:
   min_speech_duration_ms: 200
 
 audio:
-  output_device_index: null  # null = OS default
+  output_device_index: null  # null = OS default; pin explicitly (an integer index) if
+                              # "OS default" doesn't reliably route to the device you expect
 
-input_mode: "always_on"  # or "ppt"
+input_mode: "always_on"  # or "ptt"
 tts:
-  provider: "cartesia"  # or "deepgram"
+  provider: "cartesia"  # or "deepgram" -- deepgram has no adapter yet
+  voice_id: "<pick a voice id from https://play.cartesia.ai/voices>"
+
+stt:
+  provider: "groq"  # or "huggingface"
+  model: "whisper-large-v3-turbo"  # Groq model id, or a Hugging Face model id (e.g.
+                                    # "openai/whisper-large-v3-turbo") when provider is "huggingface"
 
 llm:
-  model: "<check console.groq.com/docs/models>"  # treat as config, not constant
+  provider: "groq"  # or "huggingface"
+  model: "<check console.groq.com/docs/models>"  # treat as config, not constant.
+    # Must be vision-capable if you want capture_screen results actually described
+    # (check console.groq.com/docs/vision) -- most tool-calling models are text-only.
 
 storage:
   db_path: "./agent_turns.db"
@@ -206,6 +240,8 @@ mode: "live"  # or "mock"
 ```
 
 **Mock mode:** when `mode: "mock"`, `get_quote`, `get_ohlc_history`, `get_positions_holdings` load from `fixtures/` directory (recorded real responses). Enables dev/test at any hour without live market state or valid Kite session.
+
+**Running it:** `python -m financial_voice_agent` is the live entry point — the only thing in this codebase that actually wires mic capture → VAD → STT → LLM tool loop → TTS → speaker into a runnable loop end to end. (The eval harness, `python -m financial_voice_agent.eval`, exercises the LLM+tools loop with scripted text inputs instead of a mic, and doesn't play audio.)
 
 ## Local Evaluation Set (Section 17)
 
@@ -294,4 +330,12 @@ JSON test cases: input transcript, optional mocked screen result, expected tool 
 - Groq model name is not a constant (Section 2.3, 20 — check at build time)
 - Kite session expires at 6 AM IST, token expires daily (mock mode buys dev bandwidth)
 - Cartesia output_format must match PyAudio playback stream exactly (Section 10.2 — chipmunk voice is a subtle mismatch)
+- **Kite's `/quote` needs `exchange:tradingsymbol`, and `/instruments/historical` needs a numeric `instrument_token` looked up from a separate instrument dump — neither is obvious from the tool schema's bare-symbol shape, and both silently 403 otherwise**
+- **Kite's real auth failures (expired/invalid token) return HTTP 403 with `error_type: "TokenException"`, not 401 as the naive reading of Kite's docs suggests** — code that only checks for 401 will misreport every real session expiry as a raw, unhandled error
+- **A 403 isn't always a token problem** — `error_type: "PermissionException"` means an account-level restriction (e.g. no active paid subscription for historical data), and must be surfaced as such, not as "log in again"
+- **Any tool exception not specifically anticipated must still become a spoken, explainable error, not a crash** — the turn orchestrator's top-level catch-all produces a generic, misleading fallback ("didn't catch that") for failures that have nothing to do with STT; the tool executor needs its own catch-all so the LLM gets a chance to explain the real failure in the same turn
+- **Free-tier LLM/STT credits (Hugging Face Inference in particular) run out mid-project** — this is why both providers ended up config-switchable rather than Groq-only as originally scoped; budget for occasionally needing to flip `stt.provider`/`llm.provider` and re-verify against the real API before trusting a "it worked yesterday" assumption
+- **A vision-capable, tool-calling-capable model is a much smaller set than either capability alone** — `qwen/qwen3.6-27b` on Groq was the one verified to support both together; picking a model for one capability without checking the other silently breaks `capture_screen`'s value (the model calls it, gets an image, but the image goes nowhere if the model can't actually see it)
+- **Some models default to an expensive "thinking"/extended-reasoning mode** (Qwen 3.6, gpt-oss on Groq) that can add tens of seconds of latency per call with no visible symptom besides "it's slow" — check `reasoning_effort` support for whatever model you pick
+- **PyAudio's "OS default" device doesn't always match what's actually producing sound**, especially right after switching audio outputs (e.g. plugging in a headset) — pin `audio.output_device_index` explicitly to a real enumerated index if playback doesn't route where expected
 
