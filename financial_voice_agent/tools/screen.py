@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import time
 from typing import Callable
@@ -24,7 +25,19 @@ async def capture_screen(
     path = os.path.join(screenshot_dir, filename)
     with open(path, "wb") as f:
         f.write(jpeg_bytes)
-    return {"screenshot_path": path, "width": region.get("width"), "height": region.get("height")}
+    return {
+        "screenshot_path": path,
+        "width": region.get("width"),
+        "height": region.get("height"),
+        # Consumed by run_llm_turn to attach the actual image to the next
+        # message so a vision-capable model can describe it -- not just log
+        # that a screenshot exists. Stripped before this dict is JSON-
+        # serialized into the tool message or persisted to the turns DB
+        # (financial_voice_agent/orchestrator/llm.py), since neither needs a
+        # multi-KB base64 blob.
+        "image_b64": base64.b64encode(jpeg_bytes).decode("ascii"),
+        "image_mime": "image/jpeg",
+    }
 
 
 def find_kite_window() -> dict | None:

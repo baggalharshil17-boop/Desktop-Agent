@@ -1,3 +1,4 @@
+import base64
 import io
 import os
 
@@ -33,6 +34,9 @@ async def test_capture_screen_writes_jpeg_to_disk_and_returns_path(tmp_path):
     assert result["height"] == 10
     with Image.open(result["screenshot_path"]) as image:
         assert image.format == "JPEG"
+    assert result["image_mime"] == "image/jpeg"
+    with open(result["screenshot_path"], "rb") as f:
+        assert base64.b64decode(result["image_b64"]) == f.read()
 
 
 @pytest.mark.asyncio

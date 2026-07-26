@@ -303,6 +303,53 @@ async def test_run_llm_turn_omits_system_message_when_not_provided():
 
 
 @pytest.mark.asyncio
+async def test_run_llm_turn_attaches_screenshot_image_and_strips_it_from_log():
+    captured_messages = []
+
+    class _CapturingClient:
+        def __init__(self):
+            self.round = 0
+
+        async def complete(self, messages, *, model, tools_schema):
+            captured_messages.append([dict(m) for m in messages])
+            self.round += 1
+            if self.round == 1:
+                return LlmCompletion(
+                    text=None,
+                    tool_calls=[ToolCall(id="call_1", name="capture_screen", arguments={})],
+                )
+            return LlmCompletion(text="I can see the Nifty chart.", tool_calls=[])
+
+    async def _screenshot_tool_executor(call: ToolCall) -> dict:
+        return {
+            "screenshot_path": "/tmp/shot.jpg",
+            "width": 800,
+            "height": 600,
+            "image_b64": "ZmFrZS1qcGVnLWJ5dGVz",
+            "image_mime": "image/jpeg",
+        }
+
+    result = await run_llm_turn(
+        _CapturingClient(), "what's on screen", [],
+        model="test-model", tools_schema=[], tool_executor=_screenshot_tool_executor,
+    )
+
+    assert result.response_text == "I can see the Nifty chart."
+    # The tool message and the persisted log must not carry the raw image
+    # bytes -- only the follow-up vision message does.
+    assert "image_b64" not in result.tool_results_json
+    second_round_messages = captured_messages[1]
+    tool_message = next(m for m in second_round_messages if m["role"] == "tool")
+    assert "image_b64" not in tool_message["content"]
+    vision_message = second_round_messages[-1]
+    assert vision_message["role"] == "user"
+    assert vision_message["content"][1]["type"] == "image_url"
+    assert vision_message["content"][1]["image_url"]["url"] == (
+        "data:image/jpeg;base64,ZmFrZS1qcGVnLWJ5dGVz"
+    )
+
+
+@pytest.mark.asyncio
 async def test_huggingface_llm_client_calls_chat_completion():
     class _FakeFunction:
         def __init__(self, name, arguments):

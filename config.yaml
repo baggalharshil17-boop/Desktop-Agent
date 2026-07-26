@@ -4,7 +4,7 @@ vad:
   min_speech_duration_ms: 200
 
 audio:
-  output_device_index: null  # null = OS default
+  output_device_index: 4  # Headset Earphone (Jabra Evolve2 40 SE) -- pinned explicitly, "OS default" (null) wasn't routing here reliably
 
 input_mode: "always_on"  # or "ptt"
 tts:
@@ -16,10 +16,11 @@ stt:
   model: "openai/whisper-large-v3-turbo"  # Hugging Face model id, or a Groq Whisper model id when provider is "groq"
 
 llm:
-  provider: "huggingface"  # or "groq" -- switch to "groq" once you have Groq credits
-  # Tool-calling support on HF Inference varies by model/provider -- verify this
-  # model actually emits tool_calls before trusting it in the live voice loop.
-  model: "meta-llama/Llama-3.3-70B-Instruct"
+  provider: "groq"  # or "huggingface"
+  # qwen/qwen3.6-27b supports both tool calling and vision (capture_screen's
+  # image attachment needs the latter) -- check console.groq.com/docs/models
+  # and console.groq.com/docs/vision before changing, model catalog churns.
+  model: "qwen/qwen3.6-27b"
 
 storage:
   db_path: "./agent_turns.db"

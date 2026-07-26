@@ -95,9 +95,34 @@ async def run_llm_turn(
         results = await asyncio.gather(*(tool_executor(call) for call in completion.tool_calls))
         total_tool_ms += round((clock_fn() - tool_start) * 1000)
         for call, result in zip(completion.tool_calls, results):
+            # capture_screen's result carries the actual image (image_b64/
+            # image_mime) so a vision-capable model can describe what's on
+            # screen -- see financial_voice_agent/tools/screen.py. Neither
+            # the tool message sent back to the model nor the turn log
+            # needs a multi-KB base64 blob duplicated in text form, so both
+            # get the stripped dict; the image itself goes out as a
+            # separate image_url content block below.
+            image_b64 = result.get("image_b64")
+            image_mime = result.get("image_mime", "image/jpeg")
+            result_for_logging = {k: v for k, v in result.items() if k not in ("image_b64", "image_mime")}
             all_tool_calls.append({"tool": call.name, "args": call.arguments})
-            all_tool_results.append(result)
-            messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
+            all_tool_results.append(result_for_logging)
+            messages.append(
+                {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result_for_logging)}
+            )
+            if image_b64:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Here is the screenshot from capture_screen:"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
+                            },
+                        ],
+                    }
+                )
 
     raise LlmError("LLM tool loop did not converge within max_tool_rounds")
 

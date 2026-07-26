@@ -1,5 +1,6 @@
 .worktrees/
 .env
 *.db
+screenshots/
 __pycache__/
 .pytest_cache/
