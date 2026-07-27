@@ -149,12 +149,31 @@ class EchoGate:
         self._clock_fn = clock_fn
 
     def is_echo(self, pcm_bytes: bytes) -> bool:
+        return self.diagnose(pcm_bytes)["is_echo"]
+
+    def diagnose(self, pcm_bytes: bytes) -> dict:
+        """Same verdict as is_echo, plus the numbers behind it.
+
+        Exists so a caller can log what happened on a close call (e.g. real
+        speech during real playback -- the case a false barge-in or a
+        missed one both come from) without duplicating this arithmetic. A
+        single scalar echo_gain is a broadband average of the speaker->mic
+        path; real speech's spectral content can differ from the
+        calibration tone's enough that an occasional chunk reads louder
+        than the gain predicts, so these numbers are what actually explain
+        a leak when one is reported.
+        """
+        mic_level = rms(pcm_bytes)
         reference_level = self._reference.peak_rms_since(self._delay_window_seconds)
-        if reference_level <= 0.0:
-            # Nothing was playing recently, so nothing to attribute this to.
-            return False
         predicted_echo = reference_level * self._echo_gain
-        return rms(pcm_bytes) < predicted_echo * self._margin
+        threshold = predicted_echo * self._margin
+        return {
+            "mic_rms": mic_level,
+            "reference_rms": reference_level,
+            "predicted_echo": predicted_echo,
+            "threshold": threshold,
+            "is_echo": reference_level > 0.0 and mic_level < threshold,
+        }
 
 
 def make_calibration_tone(

@@ -151,10 +151,22 @@ class _AlwaysEchoGate:
     def is_echo(self, pcm_chunk: bytes) -> bool:
         return True
 
+    def diagnose(self, pcm_chunk: bytes) -> dict:
+        return {"mic_rms": 0.01, "reference_rms": 0.02, "predicted_echo": 0.02, "threshold": 0.05, "is_echo": True}
+
 
 class _NeverEchoGate:
+    def __init__(self, *, reference_rms: float = 0.02):
+        self._reference_rms = reference_rms
+
     def is_echo(self, pcm_chunk: bytes) -> bool:
         return False
+
+    def diagnose(self, pcm_chunk: bytes) -> dict:
+        return {
+            "mic_rms": 0.5, "reference_rms": self._reference_rms,
+            "predicted_echo": 0.001, "threshold": 0.002, "is_echo": False,
+        }
 
 
 @pytest.mark.asyncio
@@ -236,3 +248,51 @@ async def test_pipeline_barges_in_once_speech_exceeds_min_duration():
     consume.cancel()
 
     assert pipeline.speech_active.is_set()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_fires_echo_diagnostic_for_every_close_call():
+    # Every VAD-flagged-speech chunk that overlaps recent playback is a
+    # potential leak or a real barge-in, whichever way it's classified --
+    # this is what gives a reported false-trigger real numbers to diagnose
+    # instead of needing to be reproduced blind.
+    queue = asyncio.Queue()
+    vad = _ScriptedVad([0.9, 0.9, 0.1])
+    await _feed(queue, [_chunk(100), _chunk(100), _chunk(0)])
+    seen = []
+    pipeline = AudioPipeline(
+        queue, vad, silence_duration_ms=5.0, min_speech_duration_ms=5.0,
+        apply_noise_reduction=False, echo_gate=_NeverEchoGate(reference_rms=0.02),
+        on_echo_diagnostic=seen.append,
+    )
+
+    [u async for u in pipeline.run()]
+
+    assert len(seen) == 2
+    assert all(d["reference_rms"] == 0.02 for d in seen)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_skips_echo_diagnostic_when_nothing_recently_played():
+    # reference_rms == 0 means no playback overlap at all -- not an
+    # ambiguous case, so it shouldn't be logged as one.
+    class _SilentReferenceGate:
+        def is_echo(self, pcm_chunk: bytes) -> bool:
+            return False
+
+        def diagnose(self, pcm_chunk: bytes) -> dict:
+            return {"mic_rms": 0.5, "reference_rms": 0.0, "predicted_echo": 0.0, "threshold": 0.0, "is_echo": False}
+
+    queue = asyncio.Queue()
+    vad = _ScriptedVad([0.9, 0.1])
+    await _feed(queue, [_chunk(100), _chunk(0)])
+    seen = []
+    pipeline = AudioPipeline(
+        queue, vad, silence_duration_ms=5.0, min_speech_duration_ms=5.0,
+        apply_noise_reduction=False, echo_gate=_SilentReferenceGate(),
+        on_echo_diagnostic=seen.append,
+    )
+
+    [u async for u in pipeline.run()]
+
+    assert seen == []

@@ -132,6 +132,18 @@ async def main() -> None:
             )
             print(f"Echo gain: {echo_gain:.3f} (near 0 = isolated, higher = more speaker bleed)")
 
+        def log_echo_diagnostic(d: dict) -> None:
+            # Fires for every VAD-flagged-speech chunk overlapping recent
+            # playback -- both real barge-in and echo leaks land here,
+            # whichever way they got classified. If barge-in misfires
+            # again, this is what tells us whether it was a genuine close
+            # call (numbers near the threshold) or something else.
+            verdict = "SUPPRESSED (echo)" if d["is_echo"] else "PASSED (counted as speech)"
+            print(
+                f"  [echo] mic={d['mic_rms']:.5f} predicted={d['predicted_echo']:.5f} "
+                f"threshold={d['threshold']:.5f} -> {verdict}"
+            )
+
         pipeline = AudioPipeline(
             capture_queue.async_q,
             SileroVadScorer(),
@@ -140,6 +152,7 @@ async def main() -> None:
             min_speech_duration_ms=config.vad_min_speech_duration_ms,
             echo_gate=echo_gate,
             min_barge_in_ms=config.barge_in_min_speech_ms,
+            on_echo_diagnostic=log_echo_diagnostic if echo_gate is not None else None,
         )
 
         print("Listening... Ctrl+C to stop.")

@@ -47,8 +47,16 @@ class AudioPipeline:
         apply_noise_reduction: bool = True,
         echo_gate=None,
         min_barge_in_ms: float = 96.0,
+        on_echo_diagnostic=None,
     ) -> None:
         self._min_barge_in_ms = min_barge_in_ms
+        # Optional callback(dict), fired for every VAD-flagged-speech chunk
+        # that overlaps recent playback -- i.e. every case that could be
+        # either real barge-in or an echo leak, whichever way it gets
+        # classified. Exists so a reported leak (VAD's classification and
+        # reality disagreeing) has real numbers behind it instead of
+        # needing to be reproduced blind -- see EchoGate.diagnose.
+        self._on_echo_diagnostic = on_echo_diagnostic
         self._queue = queue
         self._vad_scorer = vad_scorer
         self._sample_rate = sample_rate
@@ -89,8 +97,12 @@ class AudioPipeline:
 
             score = self._vad_scorer.score(chunk)
             is_speech = score >= self._speech_threshold
-            if is_speech and self._echo_gate is not None and self._echo_gate.is_echo(chunk):
-                is_speech = False
+            if is_speech and self._echo_gate is not None:
+                diagnostics = self._echo_gate.diagnose(chunk)
+                if diagnostics["reference_rms"] > 0.0 and self._on_echo_diagnostic is not None:
+                    self._on_echo_diagnostic(diagnostics)
+                if diagnostics["is_echo"]:
+                    is_speech = False
             duration_ms = _chunk_duration_ms(chunk, self._sample_rate)
 
             if is_speech:

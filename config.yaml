@@ -7,10 +7,15 @@ vad:
   # own voice from counting as a user interruption.
   barge_in_enabled: true
   # How much continuous speech is required before interrupting playback.
-  # Guards against brief residual-echo spikes at playback onset, which are
-  # loud but far too short to be a real interruption. Raise if the agent
-  # still cuts itself off; lower for snappier barge-in.
-  barge_in_min_speech_ms: 96
+  # Guards against brief residual-echo spikes and momentary leaks where a
+  # chunk of real TTS speech reads louder than the calibrated echo gain
+  # predicts (a single scalar gain is a broadband average against a noise
+  # burst -- real speech's spectral content can occasionally exceed it).
+  # Raised from 96 to 200 after a reported false mid-word barge-in; still
+  # short enough not to blunt real interruptions, since genuine barge-in
+  # speech naturally sustains for a full word (150ms+). Raise further if
+  # the agent still cuts itself off; lower for snappier barge-in.
+  barge_in_min_speech_ms: 200
 
 audio:
   # null = follow whatever Windows currently has set as default (via the WASAPI host

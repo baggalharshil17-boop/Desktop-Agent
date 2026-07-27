@@ -270,3 +270,28 @@ async def test_calibrate_echo_gain_on_headphones_measures_near_zero():
     gate = EchoGate(reference, echo_gain=gain)
     reference.note_played(tone)
     assert gate.is_echo(_tone_pcm(3000)) is False
+
+
+def test_echo_gate_diagnose_returns_the_numbers_behind_the_verdict():
+    clock = _FakeClock()
+    reference = PlaybackReference(clock_fn=clock)
+    reference.note_played(_tone_pcm(20000))
+    gate = EchoGate(reference, echo_gain=0.5, margin=2.0, clock_fn=clock)
+
+    diagnostics = gate.diagnose(_tone_pcm(10000))
+
+    assert diagnostics["is_echo"] == gate.is_echo(_tone_pcm(10000))
+    assert diagnostics["reference_rms"] == pytest.approx(rms(_tone_pcm(20000)), rel=1e-6)
+    assert diagnostics["predicted_echo"] == pytest.approx(diagnostics["reference_rms"] * 0.5, rel=1e-6)
+    assert diagnostics["threshold"] == pytest.approx(diagnostics["predicted_echo"] * 2.0, rel=1e-6)
+    assert diagnostics["mic_rms"] == pytest.approx(rms(_tone_pcm(10000)), rel=1e-6)
+
+
+def test_echo_gate_diagnose_reports_zero_reference_when_nothing_playing():
+    reference = PlaybackReference(clock_fn=_FakeClock())
+    gate = EchoGate(reference, echo_gain=0.5, clock_fn=_FakeClock())
+
+    diagnostics = gate.diagnose(_tone_pcm(500))
+
+    assert diagnostics["reference_rms"] == 0.0
+    assert diagnostics["is_echo"] is False
