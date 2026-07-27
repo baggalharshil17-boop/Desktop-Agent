@@ -34,6 +34,7 @@ class Config:
     audio_input_device_index: int | None
     echo_suppression_enabled: bool
     echo_margin: float
+    echo_gain: float | None
     input_mode: str
     tts_provider: str
     cartesia_voice_id: str | None
@@ -138,6 +139,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             audio_input_device_index=raw["audio"].get("input_device_index"),
             echo_suppression_enabled=raw["audio"].get("echo_suppression", True),
             echo_margin=raw["audio"].get("echo_margin", _DEFAULT_ECHO_MARGIN),
+            echo_gain=raw["audio"].get("echo_gain"),
             input_mode=raw["input_mode"],
             tts_provider=tts_provider,
             cartesia_voice_id=cartesia_voice_id,

@@ -545,3 +545,41 @@ def test_load_config_reads_explicit_echo_settings(tmp_path, monkeypatch):
 
     assert config.echo_suppression_enabled is False
     assert config.echo_margin == 3.5
+    assert config.echo_gain is None  # not set in this yaml -- defaults to auto-calibrate
+
+
+def test_load_config_reads_fixed_echo_gain(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+          echo_gain: 0.025
+        input_mode: "always_on"
+        tts:
+          provider: "cartesia"
+          voice_id: "test-voice-id"
+        stt:
+          provider: "groq"
+          model: "test-stt-model"
+        llm:
+          provider: "groq"
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(
+        tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n"
+    )
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.echo_gain == 0.025

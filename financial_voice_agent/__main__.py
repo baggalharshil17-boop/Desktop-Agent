@@ -125,12 +125,20 @@ async def main() -> None:
         # audio streams it was using.
         echo_gate = None
         if config.echo_suppression_enabled:
-            print("Calibrating echo (brief noise burst -- stay quiet)...")
-            echo_gain = await calibrate_echo_gain(playback, capture_queue.async_q)
+            if config.echo_gain is not None:
+                # Fixed gain from config -- skips the audible calibration
+                # burst entirely. Only as good as the number in config.yaml;
+                # re-measure (see scripts/ or the earlier calibration path)
+                # if the mic/speaker/volume setup changes.
+                echo_gain = config.echo_gain
+                print(f"Echo gain: {echo_gain:.3f} (fixed from config, no calibration)")
+            else:
+                print("Calibrating echo (brief noise burst -- stay quiet)...")
+                echo_gain = await calibrate_echo_gain(playback, capture_queue.async_q)
+                print(f"Echo gain: {echo_gain:.3f} (near 0 = isolated, higher = more speaker bleed)")
             echo_gate = EchoGate(
                 playback_reference, echo_gain=echo_gain, margin=config.echo_margin
             )
-            print(f"Echo gain: {echo_gain:.3f} (near 0 = isolated, higher = more speaker bleed)")
 
         def log_echo_diagnostic(d: dict) -> None:
             # Fires for every VAD-flagged-speech chunk overlapping recent

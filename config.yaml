@@ -41,6 +41,13 @@ audio:
   # so this lands the threshold near ~0.0094 -- roughly 40% above the echo
   # and 33% below normal speech, rather than crowding either end.
   echo_margin: 1.75
+  # Fixed echo gain -- skips the audible calibration noise burst at startup
+  # entirely. Set from earlier live calibration on this machine (headset
+  # mic + laptop speakers, gain measured 0.018-0.023 across 4 runs); using
+  # a fixed number trades a little accuracy (won't re-adapt if you change
+  # devices/volume) for a silent startup. Remove this key (or set to null)
+  # to go back to auto-calibrating on every run instead.
+  echo_gain: 0.025
 
 input_mode: "always_on"  # or "ptt"
 tts:

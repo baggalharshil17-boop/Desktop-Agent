@@ -20,6 +20,7 @@ def _make_config(
         audio_input_device_index=None,
         echo_suppression_enabled=True,
         echo_margin=2.0,
+        echo_gain=None,
         input_mode="always_on",
         tts_provider=tts_provider,
         cartesia_voice_id="test-voice-id",
