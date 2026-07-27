@@ -46,7 +46,9 @@ class AudioPipeline:
         min_speech_duration_ms: float = 200.0,
         apply_noise_reduction: bool = True,
         echo_gate=None,
+        min_barge_in_ms: float = 96.0,
     ) -> None:
+        self._min_barge_in_ms = min_barge_in_ms
         self._queue = queue
         self._vad_scorer = vad_scorer
         self._sample_rate = sample_rate
@@ -97,11 +99,17 @@ class AudioPipeline:
                     buffer = bytearray()
                     speech_ms = 0.0
                     silence_ms = 0.0
-                if not self.speech_active.is_set():
-                    self.speech_active.set()
                 buffer.extend(chunk)
                 speech_ms += duration_ms
                 silence_ms = 0.0
+                # Only announce speech (and therefore barge-in) once enough
+                # of it has accumulated. A single chunk is not enough
+                # evidence: measured on a laptop array mic, residual echo
+                # spikes to ~30x its steady level for one or two chunks at
+                # playback onset, which is indistinguishable from speech on
+                # level alone but far too short to be a real interruption.
+                if not self.speech_active.is_set() and speech_ms >= self._min_barge_in_ms:
+                    self.speech_active.set()
             elif in_utterance:
                 buffer.extend(chunk)
                 silence_ms += duration_ms

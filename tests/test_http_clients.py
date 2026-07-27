@@ -15,6 +15,7 @@ def _make_config(
         vad_silence_duration_ms=600,
         vad_min_speech_duration_ms=200,
         barge_in_enabled=True,
+        barge_in_min_speech_ms=96.0,
         audio_output_device_index=None,
         audio_input_device_index=None,
         echo_suppression_enabled=True,

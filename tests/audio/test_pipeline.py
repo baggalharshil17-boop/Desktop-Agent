@@ -195,3 +195,44 @@ async def test_pipeline_still_captures_speech_the_echo_gate_clears():
     utterances = [u async for u in pipeline.run()]
 
     assert len(utterances) == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_does_not_barge_in_on_speech_shorter_than_min_duration():
+    # A one-or-two-chunk blip is residual echo spiking at playback onset, not
+    # a person interrupting -- measured at ~30x the steady echo level on a
+    # laptop array mic, so level alone can't tell them apart. Duration can.
+    queue = asyncio.Queue()
+    vad = _ScriptedVad([0.9, 0.1, 0.1])
+    await _feed(queue, [_chunk(100)] + [_chunk(0)] * 2)  # 10ms of "speech"
+    pipeline = AudioPipeline(
+        queue, vad, silence_duration_ms=5.0, min_speech_duration_ms=5.0,
+        apply_noise_reduction=False, min_barge_in_ms=96.0,
+    )
+
+    [u async for u in pipeline.run()]
+
+    assert not pipeline.speech_active.is_set()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_barges_in_once_speech_exceeds_min_duration():
+    queue = asyncio.Queue()
+    speech_chunks = 12  # 12 * 10ms = 120ms > 96ms threshold
+    vad = _ScriptedVad([0.9] * speech_chunks)
+    for c in [_chunk(100)] * speech_chunks:
+        await queue.put(c)
+
+    pipeline = AudioPipeline(
+        queue, vad, silence_duration_ms=5.0, min_speech_duration_ms=5.0,
+        apply_noise_reduction=False, min_barge_in_ms=96.0,
+    )
+
+    # Drive the generator far enough to consume the speech chunks, then stop
+    # (no sentinel queued -- it would block otherwise).
+    agen = pipeline.run()
+    consume = asyncio.create_task(agen.__anext__())
+    await asyncio.sleep(0.05)
+    consume.cancel()
+
+    assert pipeline.speech_active.is_set()

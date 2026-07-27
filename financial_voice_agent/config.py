@@ -29,6 +29,7 @@ class Config:
     vad_silence_duration_ms: int
     vad_min_speech_duration_ms: int
     barge_in_enabled: bool
+    barge_in_min_speech_ms: float
     audio_output_device_index: int | None
     audio_input_device_index: int | None
     echo_suppression_enabled: bool
@@ -132,6 +133,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             vad_silence_duration_ms=raw["vad"]["silence_duration_ms"],
             vad_min_speech_duration_ms=raw["vad"]["min_speech_duration_ms"],
             barge_in_enabled=raw["vad"].get("barge_in_enabled", True),
+            barge_in_min_speech_ms=raw["vad"].get("barge_in_min_speech_ms", 96.0),
             audio_output_device_index=raw["audio"]["output_device_index"],
             audio_input_device_index=raw["audio"].get("input_device_index"),
             echo_suppression_enabled=raw["audio"].get("echo_suppression", True),

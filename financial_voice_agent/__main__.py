@@ -139,6 +139,7 @@ async def main() -> None:
             silence_duration_ms=config.vad_silence_duration_ms,
             min_speech_duration_ms=config.vad_min_speech_duration_ms,
             echo_gate=echo_gate,
+            min_barge_in_ms=config.barge_in_min_speech_ms,
         )
 
         print("Listening... Ctrl+C to stop.")

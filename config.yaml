@@ -6,6 +6,11 @@ vad:
   # with open speakers: audio.echo_suppression below stops the assistant's
   # own voice from counting as a user interruption.
   barge_in_enabled: true
+  # How much continuous speech is required before interrupting playback.
+  # Guards against brief residual-echo spikes at playback onset, which are
+  # loud but far too short to be a real interruption. Raise if the agent
+  # still cuts itself off; lower for snappier barge-in.
+  barge_in_min_speech_ms: 96
 
 audio:
   # null = follow whatever Windows currently has set as default (via the WASAPI host
@@ -25,7 +30,12 @@ audio:
   # How much louder than the predicted echo the mic must be to count as a
   # real person. Raise if the assistant still interrupts itself; lower if
   # barge-in needs you to talk too loudly.
-  echo_margin: 2.0
+  #
+  # 1.75 chosen from measured levels on this machine (headset mic + laptop
+  # speakers): speech sits at ~0.0141 RMS and the loudest echo at ~0.0068,
+  # so this lands the threshold near ~0.0094 -- roughly 40% above the echo
+  # and 33% below normal speech, rather than crowding either end.
+  echo_margin: 1.75
 
 input_mode: "always_on"  # or "ptt"
 tts:

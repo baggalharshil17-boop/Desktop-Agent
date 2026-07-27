@@ -158,7 +158,7 @@ class EchoGate:
 
 
 def make_calibration_tone(
-    *, duration_seconds: float = 0.5, sample_rate: int = 16000, amplitude: float = 0.2, seed: int = 11
+    *, duration_seconds: float = 1.0, sample_rate: int = 16000, amplitude: float = 0.2, seed: int = 11
 ) -> bytes:
     """Short noise burst used to measure the speaker->mic path.
 
@@ -206,4 +206,23 @@ async def calibrate_echo_gain(
             continue
     await play_task
 
-    return estimate_echo_gain(mic_rms=rms(b"".join(captured)), reference_rms=rms(tone))
+    if not captured:
+        return estimate_echo_gain(mic_rms=0.0, reference_rms=rms(tone))
+
+    # A percentile of per-chunk level, NOT the RMS of everything
+    # concatenated. Measured on a laptop array mic: the OS's own echo
+    # canceller lets a short burst through at playback onset while it
+    # converges, ~30x the steady-state level. Averaging that burst in
+    # overestimated the gain ~3x, which inflated the predicted echo enough
+    # to block every real interruption. The percentile tracks the sustained
+    # echo the gate actually has to discriminate against.
+    #
+    # p75 rather than p90 because the estimate has to be *stable* run to
+    # run, not just representative: with a 1s tone (~30 chunks) p75 varied
+    # 1.3x across repeats while p90 sat close enough to the maximum to
+    # inherit its noise. An unstable gain is worse than a slightly low one,
+    # since the derived threshold can drift above the user's speech level
+    # and silently disable barge-in.
+    levels = sorted(rms(chunk) for chunk in captured)
+    mic_level = levels[min(int(len(levels) * 0.75), len(levels) - 1)]
+    return estimate_echo_gain(mic_rms=mic_level, reference_rms=rms(tone))
