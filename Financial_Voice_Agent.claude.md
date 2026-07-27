@@ -136,10 +136,16 @@ CREATE TABLE turns (
 - Silence before end-of-speech: 600ms (raise if cutting off mid-sentence)
 - Min speech duration: 200ms (raise in noise)
 - Sample rate: **must be 16000 Hz** (silero-vad trained at 16kHz)
+- Barge-in: enabled by default (`vad.barge_in_enabled: true`); safe even with open speakers because echo suppression (below) prevents self-interruption
 
 **Noise suppression:** PyAudio → noisereduce (stationary mode, <30ms overhead) → VAD gate → buffer
 
-**Output device:** enumerate with `pyaudio.get_device_info_by_index()`, accept config key `audio.output_device_index`, fall back to OS default with warning.
+**Audio device selection (Windows):**
+- PyAudio's built-in "default" device resolves through whichever host API it initializes first (usually MME), which can silently disagree with Windows Sound Settings (which controls WASAPI). Setting `audio.output_device_index: null` now uses WASAPI to identify the current physical device, then opens that device's MME entry instead — gaining both an accurate, live-tracking default and a stream that can resample to 16kHz (WASAPI-default devices only accept their native rate, e.g. 48kHz, and reject 16kHz outright). Setting an explicit integer index overrides this and pinpoints a specific device. Same for `audio.input_device_index`.
+
+**Echo suppression (barge-in on open speakers):**
+- Enabled by default (`audio.echo_suppression: true`). Startup calibration plays a short noise burst, measures what the mic hears back, and tunes an echo suppressor to ignore mic audio quiet enough to be explained by that echo. This is NOT full acoustic echo cancellation — AEC libraries (speexdsp, webrtc-audio-processing) don't build on Python 3.14 and solving full double-talk is unnecessary; we only need a binary "is this the speaker or a person?" verdict, since barge-in stops playback and cleans the mic. The gate vetoes VAD speech verdicts during playback, which fixes two bugs: the assistant can no longer interrupt itself, nor transcribe its own voice as a user utterance. Measured threshold (`audio.echo_margin`) is a fixed safety margin (default 1.75, tuned from real hardware) above the peak reference echo energy, removing the need to estimate speaker→mic delay.
+- Set `audio.echo_gain` to a fixed value (e.g., 0.025 on this hardware) to skip the audible calibration burst at startup, trading a little re-adaptiveness for silence. Leave it unset (null) to auto-calibrate every run.
 
 ## System Prompt (Current — financial_voice_agent/orchestrator/system_prompt.py)
 
@@ -212,15 +218,33 @@ vad:
   speech_threshold: 0.5
   silence_duration_ms: 600
   min_speech_duration_ms: 200
+  barge_in_enabled: true  # Interrupt playback when user speaks. Safe with open speakers
+                           # because audio.echo_suppression stops the assistant's own voice
+                           # from counting as a user interruption.
+  barge_in_min_speech_ms: 200  # Sustained-speech requirement to guard against brief echo
+                                # spikes. Raised from 96 to 200 after false mid-word
+                                # barge-in; still short enough for real interruptions.
 
 audio:
-  output_device_index: null  # null = OS default; pin explicitly (an integer index) if
-                              # "OS default" doesn't reliably route to the device you expect
+  output_device_index: null  # null = follow Windows' current default (WASAPI, most reliable).
+                              # Set an explicit integer index only to override.
+  input_device_index: null   # Allows mic and speaker to independently follow OS defaults.
+
+  echo_suppression: true     # Lets barge-in work on open speakers, not just headphones.
+                              # Startup calibration measures speaker->mic echo and ignores
+                              # mic audio quiet enough to be that echo. Disables the
+                              # assistant from interrupting itself.
+  echo_margin: 1.75          # How much louder than predicted echo the mic must be to count
+                              # as real speech. Chosen from measured levels on deployed
+                              # hardware (speech ~0.0141 RMS, echo ~0.0068 RMS).
+  echo_gain: 0.025           # Fixed echo gain -- skips audible calibration noise burst at
+                              # startup. Set from live calibration on this machine; remove
+                              # (set to null) to auto-calibrate on every run instead.
 
 input_mode: "always_on"  # or "ptt"
 tts:
   provider: "cartesia"  # or "deepgram" -- deepgram has no adapter yet
-  voice_id: "<pick a voice id from https://play.cartesia.ai/voices>"
+  voice_id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
 
 stt:
   provider: "groq"  # or "huggingface"
@@ -229,9 +253,9 @@ stt:
 
 llm:
   provider: "groq"  # or "huggingface"
-  model: "<check console.groq.com/docs/models>"  # treat as config, not constant.
-    # Must be vision-capable if you want capture_screen results actually described
-    # (check console.groq.com/docs/vision) -- most tool-calling models are text-only.
+  model: "qwen/qwen3.6-27b"  # Must support both tool calling and vision (capture_screen
+                              # needs the latter). Check console.groq.com/docs/models and
+                              # console.groq.com/docs/vision before changing.
 
 storage:
   db_path: "./agent_turns.db"
@@ -337,5 +361,12 @@ JSON test cases: input transcript, optional mocked screen result, expected tool 
 - **Free-tier LLM/STT credits (Hugging Face Inference in particular) run out mid-project** — this is why both providers ended up config-switchable rather than Groq-only as originally scoped; budget for occasionally needing to flip `stt.provider`/`llm.provider` and re-verify against the real API before trusting a "it worked yesterday" assumption
 - **A vision-capable, tool-calling-capable model is a much smaller set than either capability alone** — `qwen/qwen3.6-27b` on Groq was the one verified to support both together; picking a model for one capability without checking the other silently breaks `capture_screen`'s value (the model calls it, gets an image, but the image goes nowhere if the model can't actually see it)
 - **Some models default to an expensive "thinking"/extended-reasoning mode** (Qwen 3.6, gpt-oss on Groq) that can add tens of seconds of latency per call with no visible symptom besides "it's slow" — check `reasoning_effort` support for whatever model you pick
-- **PyAudio's "OS default" device doesn't always match what's actually producing sound**, especially right after switching audio outputs (e.g. plugging in a headset) — pin `audio.output_device_index` explicitly to a real enumerated index if playback doesn't route where expected
+- **PyAudio device indices are not stable across reconnects, and "OS default" resolution differs by host API.** Confirmed live: PyAudio's own `get_default_output_device_info()` resolves through whichever host API it initializes first (often MME), which silently disagrees with Windows Sound Settings (which controls WASAPI). Built `audio/devices.py` to use WASAPI only to identify the currently-selected physical device (by name, matched via prefix since MME truncates names), then open that device's MME entry instead — getting both an accurate, live-tracking default and a stream capable of resampling to 16kHz (WASAPI-default devices only accept their native rate, e.g. 48kHz, and reject 16kHz outright, breaking the entire pipeline).
+- **AEC libraries (speexdsp, webrtc-audio-processing) don't build on Python 3.14** — unmaintained bindings, no current wheels. This project framed echo suppression not as full acoustic echo cancellation (solving hard double-talk reconstruction) but as a much narrower binary classifier: "is this the speaker or a person?" Since barge-in stops playback and cleans the mic on match, we never need to separate speech during double-talk.
+- **Comparing waveforms (cross-correlation) doesn't work in a reverberant room with speaker nonlinearity and resampling.** Chose energy-envelope comparison (RMS per 20ms chunk) instead — immune to reverb, speaker distortion, and the resampling MME does. Peak reference energy over a delay window (not instantaneous) removes any need to estimate speaker→mic propagation delay.
+- **Startup calibration measures speaker→mic echo gain on whatever the OS chose for mic/speaker/volume.** A 0.5s tone measured only the onset burst (inflated by the OS echo canceller's convergence spike), overestimating gain 3x. Fixed by taking a percentile of per-chunk levels and doubling tone to 1s — stability matters more than representativeness here. Measured on this hardware (headset mic + laptop speakers): speech ~0.0141 RMS, echo peak ~0.0068 RMS, tuned echo_margin to 1.75, landing threshold near ~0.0094.
+- **Scalar-gain echo prediction is inherently broadband, but real TTS speech has different spectral content.** Calibration against noise burst averages the acoustic path, but moments of real speech can momentarily produce louder echo than the average predicts, causing false barge-ins (cut mid-word). Mitigated with `vad.barge_in_min_speech_ms` (raised from 96 to 200) — real interruption speech sustains a full word (150ms+), but brief spectral-mismatch spikes are too short. Added `EchoGate.diagnose()` and `on_echo_diagnostic` hook for live debugging of ambiguous cases; logged to console so the next false positive has real mic/predicted/threshold numbers instead of needing reproduction.
+- **Echo gate must veto VAD inside AudioPipeline, not at the playback check.** Placing it in pipeline fixes two bugs: assistant can't interrupt itself (would see its own playback spike as speech), and can't transcribe its own voice as a user utterance (the source of bogus "Thank you." turns appearing in logs when the user never said them).
+- **Real-time audio-level barge-in (VAD + echo gate) can only judge loudness/duration — transcription needs the utterance already captured.** Added keyword-triggered barge-in as a second independent signal: `play_with_barge_in` watches `output_queue` while playback runs, transcribes any newly-arrived utterance in parallel (non-blocking), and forces interrupt on a keyword match against `INTERRUPT_PHRASES` ("wait", "stop", "hold on", "actually", "never mind", etc., prefix-matched to avoid false positives like "what's the stop-loss level"). Critical bug fix caught by pre-existing test: must NOT speculatively transcribe items already queued at playback start (those are normal next-turn-in-line, not live interruption) — fixed by snapshotting pre-existing queue contents at entry and only reacting to new arrivals.
+- **Cartesia can run out of API credits (account-level, not code bugs).** Confirmed live: a reported "something went wrong on my end" TTS error was a transient Cartesia API failure from credit exhaustion, unrelated to device switching. Similar to Groq/Hugging Face credit limits — worth budgeting vendor quota separately from code reliability.
 
