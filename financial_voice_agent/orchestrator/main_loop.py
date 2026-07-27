@@ -7,6 +7,7 @@ from collections import deque
 from typing import Callable
 
 from financial_voice_agent.audio.wav import encode_wav
+from financial_voice_agent.orchestrator.interrupt_keywords import is_interrupt_phrase
 from financial_voice_agent.orchestrator.turn import run_turn, update_history
 
 # Separate phrasing per failure stage -- "I didn't catch that" is only
@@ -54,8 +55,81 @@ async def drive_pipeline(pipeline, output_queue: asyncio.Queue) -> None:
         await output_queue.put(encode_wav(utterance_pcm))
 
 
+async def _watch_for_keyword_interrupt(
+    output_queue: asyncio.Queue,
+    stt_fn,
+    interrupt_event: threading.Event,
+    playback_task: "asyncio.Future",
+    *,
+    poll_interval: float = 0.05,
+) -> None:
+    """Best-effort second signal for barge-in, alongside VAD/echo-gate:
+    while a response is still playing, transcribe any newly arrived
+    utterance immediately (concurrently with playback, not blocking it) and
+    force an interrupt if it opens with a deliberate redirect phrase --
+    "wait", "stop", "hold on", etc. (interrupt_keywords.py). This exists
+    because real-time audio-level barge-in can only ever judge loudness/
+    duration; it can't know the words, since transcription needs the
+    utterance already captured. Content-based detection closes that gap for
+    the specific case of a clearly-spoken interruption word that VAD/echo
+    suppression was too conservative to catch on level alone.
+
+    The utterance is always handed back to output_queue (matched or not),
+    so the normal turn loop still processes it once playback ends -- this
+    function only ever peeks. Each item is speculatively transcribed at
+    most once per playback (tracked by id()) to avoid re-transcribing the
+    same handed-back item in a tight loop.
+
+    Only reacts to utterances that arrive AFTER this playback starts.
+    Whatever's already queued at entry is simply the next utterance in
+    line (e.g. the user's normal follow-up question, queued while the
+    previous turn was still being processed) -- not a live interruption --
+    and must not be speculatively transcribed early, which would both
+    waste an STT call on every routine turn and (confirmed by a test
+    failure) call stt_fn on it before the real turn loop does, corrupting
+    per-call state a caller might keep across STT calls."""
+    checked_ids: set[int] = set()
+    preexisting_ids: set[int] = set()
+    preexisting: list = []
+    while True:
+        try:
+            preexisting.append(output_queue.get_nowait())
+        except asyncio.QueueEmpty:
+            break
+    for wav in preexisting:
+        preexisting_ids.add(id(wav))
+        output_queue.put_nowait(wav)
+
+    while not playback_task.done():
+        try:
+            wav = output_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            await asyncio.sleep(poll_interval)
+            continue
+        if id(wav) in checked_ids or id(wav) in preexisting_ids:
+            output_queue.put_nowait(wav)
+            await asyncio.sleep(poll_interval)
+            continue
+        checked_ids.add(id(wav))
+        try:
+            transcript = await stt_fn(wav)
+        except Exception:  # noqa: BLE001 -- a failed speculative transcribe must not crash playback
+            transcript = None
+        output_queue.put_nowait(wav)
+        if is_interrupt_phrase(transcript):
+            interrupt_event.set()
+            return
+
+
 async def play_with_barge_in(
-    playback, tts_audio: bytes, pipeline, *, poll_interval: float = 0.02, barge_in_enabled: bool = True
+    playback,
+    tts_audio: bytes,
+    pipeline,
+    *,
+    poll_interval: float = 0.02,
+    barge_in_enabled: bool = True,
+    output_queue: asyncio.Queue | None = None,
+    stt_fn=None,
 ) -> bool:
     """Runs playback.play() on a worker thread (asyncio.to_thread) rather
     than calling it directly on the event loop thread. playback.play() is a
@@ -77,16 +151,29 @@ async def play_with_barge_in(
     the assistant's own voice, cutting every response short after a word or
     two, with no way to distinguish that from real user barge-in using VAD
     alone. Confirmed live: this exact scenario reproduced on a laptop-
-    speaker + headset-mic setup."""
+    speaker + headset-mic setup.
+
+    output_queue and stt_fn (both optional, and independent of
+    barge_in_enabled) additionally run _watch_for_keyword_interrupt as a
+    content-based fallback -- see that function's docstring."""
     interrupt_event = threading.Event()
     playback_task = asyncio.ensure_future(
         asyncio.to_thread(playback.play, tts_audio, interrupt_event=interrupt_event)
     )
-    while not playback_task.done():
-        if barge_in_enabled and pipeline.speech_active.is_set():
-            interrupt_event.set()
-        await asyncio.sleep(poll_interval)
-    return playback_task.result()
+    keyword_watch_task = None
+    if output_queue is not None and stt_fn is not None:
+        keyword_watch_task = asyncio.ensure_future(
+            _watch_for_keyword_interrupt(output_queue, stt_fn, interrupt_event, playback_task)
+        )
+    try:
+        while not playback_task.done():
+            if barge_in_enabled and pipeline.speech_active.is_set():
+                interrupt_event.set()
+            await asyncio.sleep(poll_interval)
+        return playback_task.result()
+    finally:
+        if keyword_watch_task is not None:
+            keyword_watch_task.cancel()
 
 
 def _pick_fallback_message(
@@ -155,11 +242,13 @@ async def run_voice_loop(
                     fallback_audio = None
                 if fallback_audio:
                     await play_with_barge_in(
-                        playback, fallback_audio, pipeline, barge_in_enabled=barge_in_enabled
+                        playback, fallback_audio, pipeline, barge_in_enabled=barge_in_enabled,
+                        output_queue=output_queue, stt_fn=stt_fn,
                     )
             elif result.tts_audio:
                 await play_with_barge_in(
-                    playback, result.tts_audio, pipeline, barge_in_enabled=barge_in_enabled
+                    playback, result.tts_audio, pipeline, barge_in_enabled=barge_in_enabled,
+                    output_queue=output_queue, stt_fn=stt_fn,
                 )
     finally:
         drive_task.cancel()

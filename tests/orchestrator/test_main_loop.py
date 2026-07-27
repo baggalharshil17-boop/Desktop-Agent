@@ -7,6 +7,7 @@ from financial_voice_agent.orchestrator.main_loop import (
     RATE_LIMIT_MESSAGES,
     STT_FAILURE_MESSAGES,
     drive_pipeline,
+    play_with_barge_in,
     run_voice_loop,
 )
 from financial_voice_agent.orchestrator.turn import LlmTurnResult
@@ -170,6 +171,154 @@ async def test_run_voice_loop_stops_playback_mid_stream_when_speech_active_set_d
     # playback's interrupt_event WHILE playback was in progress, not before
     # it started.
     assert playback.play_calls[0] < 15
+
+
+@pytest.mark.asyncio
+async def test_play_with_barge_in_interrupts_on_matching_keyword_from_new_arrival():
+    # A new utterance lands in output_queue mid-playback; stt_fn reports it
+    # as "stop" -- a deliberate redirect phrase -- so playback must be cut
+    # short even though pipeline.speech_active (the VAD/echo-gate signal)
+    # never fires at all.
+    playback = _SlowFakePlayback(num_chunks=15, chunk_delay=0.02)
+    pipeline = _FakePipeline([])  # speech_active never set
+    output_queue: asyncio.Queue = asyncio.Queue()
+
+    async def stt_fn(wav):
+        return "stop" if wav == b"new-utterance" else "irrelevant"
+
+    async def arrive_mid_playback():
+        await asyncio.sleep(0.06)
+        await output_queue.put(b"new-utterance")
+
+    arrival_task = asyncio.create_task(arrive_mid_playback())
+    result = await play_with_barge_in(
+        playback, b"long-response-audio", pipeline,
+        output_queue=output_queue, stt_fn=stt_fn,
+    )
+    await arrival_task
+
+    assert result is False  # interrupted, not completed
+    assert playback.play_calls[0] < 15  # stopped mid-stream, not at the end
+    # Handed back for the normal turn loop to process -- not consumed.
+    assert output_queue.get_nowait() == b"new-utterance"
+
+
+@pytest.mark.asyncio
+async def test_play_with_barge_in_does_not_interrupt_on_non_keyword_arrival():
+    playback = _SlowFakePlayback(num_chunks=8, chunk_delay=0.02)
+    pipeline = _FakePipeline([])
+    output_queue: asyncio.Queue = asyncio.Queue()
+
+    async def stt_fn(wav):
+        return "what's the nifty level"  # a normal query, not a redirect
+
+    async def arrive_mid_playback():
+        await asyncio.sleep(0.03)
+        await output_queue.put(b"new-utterance")
+
+    arrival_task = asyncio.create_task(arrive_mid_playback())
+    result = await play_with_barge_in(
+        playback, b"response-audio", pipeline,
+        output_queue=output_queue, stt_fn=stt_fn,
+    )
+    await arrival_task
+
+    assert result is True  # completed uninterrupted
+    assert playback.play_calls[0] == 8
+
+
+@pytest.mark.asyncio
+async def test_play_with_barge_in_never_speculatively_transcribes_utterances_queued_before_playback():
+    # An utterance already sitting in the queue when playback starts is
+    # simply the next turn in line, queued while this turn was still being
+    # processed -- not a live interruption. Must not be touched by stt_fn
+    # at all, even if it happens to look like a keyword.
+    playback = _SlowFakePlayback(num_chunks=6, chunk_delay=0.02)
+    pipeline = _FakePipeline([])
+    output_queue: asyncio.Queue = asyncio.Queue()
+    output_queue.put_nowait(b"already-queued")
+
+    stt_calls: list[bytes] = []
+
+    async def stt_fn(wav):
+        stt_calls.append(wav)
+        return "stop"  # would force an interrupt if it were ever checked
+
+    result = await play_with_barge_in(
+        playback, b"response-audio", pipeline,
+        output_queue=output_queue, stt_fn=stt_fn,
+    )
+
+    assert result is True  # completed uninterrupted -- pre-existing item never checked
+    assert playback.play_calls[0] == 6
+    assert stt_calls == []
+    assert output_queue.get_nowait() == b"already-queued"  # still there, untouched
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_still_processes_the_handed_back_utterance_normally(tmp_path):
+    # End-to-end: a keyword-triggered interrupt must not lose the utterance
+    # that triggered it -- the normal turn loop picks it up next.
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+
+    class _DelayedSecondUtterancePipeline:
+        def __init__(self):
+            self.speech_active = asyncio.Event()
+
+        async def run(self):
+            yield b"utterance-1"
+            await asyncio.sleep(0.06)
+            yield b"utterance-2"
+
+    class _SlowFakePlaybackWithContent:
+        """Like _SlowFakePlayback, but also records which audio bytes each
+        call played, so a specific response's presence can be verified."""
+
+        def __init__(self, num_chunks: int = 15, chunk_delay: float = 0.02):
+            self.play_calls: list[int] = []
+            self.played_audio: list[bytes] = []
+            self._num_chunks = num_chunks
+            self._chunk_delay = chunk_delay
+
+        def play(self, pcm_bytes, *, chunk_size=1024, interrupt_event=None):
+            import time
+
+            self.played_audio.append(pcm_bytes)
+            chunks_written = 0
+            for _ in range(self._num_chunks):
+                if interrupt_event is not None and interrupt_event.is_set():
+                    self.play_calls.append(chunks_written)
+                    return False
+                time.sleep(self._chunk_delay)
+                chunks_written += 1
+            self.play_calls.append(chunks_written)
+            return True
+
+    pipeline = _DelayedSecondUtterancePipeline()
+    playback = _SlowFakePlaybackWithContent(num_chunks=15, chunk_delay=0.02)
+
+    async def stt_fn(wav):
+        # drive_pipeline wraps each yielded utterance in a WAV container
+        # (encode_wav) before it reaches output_queue/stt_fn, so the raw
+        # bytes survive as a substring of the WAV data, not an exact match.
+        return "stop" if b"utterance-2" in wav else "hello"
+
+    async def llm_fn(transcript, history):
+        return LlmTurnResult(response_text=f"response to {transcript}", tool_calls_json=None, tool_results_json=None)
+
+    async def tts_fn(text):
+        return text.encode()
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+    )
+
+    # First response got interrupted by the "stop" arrival; the utterance
+    # that said "stop" was then processed as its own normal turn.
+    assert playback.play_calls[0] < 15
+    assert playback.play_calls[1] == 15  # second turn's response played in full
+    assert b"response to stop" in playback.played_audio
 
 
 @pytest.mark.asyncio
