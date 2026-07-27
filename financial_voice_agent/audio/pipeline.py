@@ -45,6 +45,7 @@ class AudioPipeline:
         silence_duration_ms: float = 600.0,
         min_speech_duration_ms: float = 200.0,
         apply_noise_reduction: bool = True,
+        echo_gate=None,
     ) -> None:
         self._queue = queue
         self._vad_scorer = vad_scorer
@@ -53,6 +54,13 @@ class AudioPipeline:
         self._silence_duration_ms = silence_duration_ms
         self._min_speech_duration_ms = min_speech_duration_ms
         self._apply_noise_reduction = apply_noise_reduction
+        # Optional EchoGate (financial_voice_agent/audio/echo.py). Vetoing
+        # VAD here rather than at the barge-in check fixes two problems with
+        # one hook: the assistant's own voice can neither interrupt its
+        # playback nor be captured and transcribed as a new user utterance.
+        # Silero happily scores speaker-reproduced speech as speech -- it is
+        # speech, just not the user's.
+        self._echo_gate = echo_gate
         # This event only reflects reality while `run()`'s async generator is
         # actively being iterated. Blocking inside the `async for` loop body
         # (e.g. awaiting a slow STT call before requesting the next
@@ -79,6 +87,8 @@ class AudioPipeline:
 
             score = self._vad_scorer.score(chunk)
             is_speech = score >= self._speech_threshold
+            if is_speech and self._echo_gate is not None and self._echo_gate.is_echo(chunk):
+                is_speech = False
             duration_ms = _chunk_duration_ms(chunk, self._sample_rate)
 
             if is_speech:

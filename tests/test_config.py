@@ -490,3 +490,58 @@ def test_load_config_placeholder_llm_model_raises(tmp_path, monkeypatch):
 
     with pytest.raises(ConfigError, match="placeholder"):
         load_config(config_path=yaml_path, env_path=env_path)
+
+
+def test_load_config_defaults_echo_suppression_on(tmp_path, monkeypatch):
+    # Must default ON: it's what makes barge-in safe on open speakers, and a
+    # config written before this feature existed should still get it.
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    yaml_path = _write_yaml(tmp_path, VALID_YAML)
+    env_path = _write_env(
+        tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n"
+    )
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.echo_suppression_enabled is True
+    assert config.echo_margin == 2.0
+
+
+def test_load_config_reads_explicit_echo_settings(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+          echo_suppression: false
+          echo_margin: 3.5
+        input_mode: "always_on"
+        tts:
+          provider: "cartesia"
+          voice_id: "test-voice-id"
+        stt:
+          provider: "groq"
+          model: "test-stt-model"
+        llm:
+          provider: "groq"
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(
+        tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n"
+    )
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.echo_suppression_enabled is False
+    assert config.echo_margin == 3.5

@@ -17,6 +17,8 @@ def _make_config(
         barge_in_enabled=True,
         audio_output_device_index=None,
         audio_input_device_index=None,
+        echo_suppression_enabled=True,
+        echo_margin=2.0,
         input_mode="always_on",
         tts_provider=tts_provider,
         cartesia_voice_id="test-voice-id",

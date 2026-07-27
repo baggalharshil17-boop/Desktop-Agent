@@ -28,6 +28,11 @@ from cartesia import AsyncCartesia
 
 from financial_voice_agent.audio.capture import AudioCapture
 from financial_voice_agent.audio.devices import resolve_input_device_index, resolve_output_device_index
+from financial_voice_agent.audio.echo import (
+    EchoGate,
+    PlaybackReference,
+    calibrate_echo_gain,
+)
 from financial_voice_agent.audio.pipeline import AudioPipeline
 from financial_voice_agent.audio.vad import SileroVadScorer
 from financial_voice_agent.config import load_config
@@ -65,14 +70,14 @@ async def main() -> None:
 
     capture_queue: janus.Queue = janus.Queue()
     capture = AudioCapture(capture_queue, input_device_index=input_device_index)
-    pipeline = AudioPipeline(
-        capture_queue.async_q,
-        SileroVadScorer(),
-        speech_threshold=config.vad_speech_threshold,
-        silence_duration_ms=config.vad_silence_duration_ms,
-        min_speech_duration_ms=config.vad_min_speech_duration_ms,
+
+    # The reference is always recorded (it's cheap); only the gate that
+    # consumes it is optional. Wiring it unconditionally keeps playback and
+    # calibration identical whether or not suppression is enabled.
+    playback_reference = PlaybackReference()
+    playback = AudioPlayback(
+        output_device_index=output_device_index, playback_reference=playback_reference
     )
-    playback = AudioPlayback(output_device_index=output_device_index)
 
     stt_client = make_stt_client(config)
     llm_client = make_llm_client(config)
@@ -113,8 +118,30 @@ async def main() -> None:
 
     playback.open()
     capture.start()
-    print("Listening... Ctrl+C to stop.")
     try:
+        # Calibration has to happen after capture is live (it listens) and
+        # before the pipeline is built (the gate needs the measured gain),
+        # so it sits inside this try -- a failure here must still close the
+        # audio streams it was using.
+        echo_gate = None
+        if config.echo_suppression_enabled:
+            print("Calibrating echo (brief noise burst -- stay quiet)...")
+            echo_gain = await calibrate_echo_gain(playback, capture_queue.async_q)
+            echo_gate = EchoGate(
+                playback_reference, echo_gain=echo_gain, margin=config.echo_margin
+            )
+            print(f"Echo gain: {echo_gain:.3f} (near 0 = isolated, higher = more speaker bleed)")
+
+        pipeline = AudioPipeline(
+            capture_queue.async_q,
+            SileroVadScorer(),
+            speech_threshold=config.vad_speech_threshold,
+            silence_duration_ms=config.vad_silence_duration_ms,
+            min_speech_duration_ms=config.vad_min_speech_duration_ms,
+            echo_gate=echo_gate,
+        )
+
+        print("Listening... Ctrl+C to stop.")
         await run_voice_loop(
             pipeline,
             playback,

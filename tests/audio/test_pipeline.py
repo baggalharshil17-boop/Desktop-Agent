@@ -145,3 +145,53 @@ async def test_pipeline_applies_real_noise_reduction_to_finalized_utterance():
     assert len(utterances) == 1
     assert isinstance(utterances[0], bytes)
     assert len(utterances[0]) > 0
+
+
+class _AlwaysEchoGate:
+    def is_echo(self, pcm_chunk: bytes) -> bool:
+        return True
+
+
+class _NeverEchoGate:
+    def is_echo(self, pcm_chunk: bytes) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_pipeline_suppresses_speech_the_echo_gate_attributes_to_playback():
+    # Silero scores the assistant's own voice coming back through the mic as
+    # speech -- because it is speech, just not the user's. Without the gate
+    # veto this became both a spurious barge-in and a bogus utterance that
+    # got transcribed (confirmed live: turns logged with transcripts like
+    # "Thank you." that the user never said).
+    queue = asyncio.Queue()
+    vad = _ScriptedVad([0.9, 0.9, 0.9, 0.1, 0.1, 0.1])
+    chunks = [_chunk(100)] * 3 + [_chunk(0)] * 3
+    await _feed(queue, chunks)
+    pipeline = AudioPipeline(
+        queue, vad, silence_duration_ms=20.0, min_speech_duration_ms=20.0,
+        apply_noise_reduction=False, echo_gate=_AlwaysEchoGate(),
+    )
+
+    utterances = [u async for u in pipeline.run()]
+
+    assert utterances == []
+    assert not pipeline.speech_active.is_set()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_still_captures_speech_the_echo_gate_clears():
+    # The gate must only veto -- genuine speech during playback (a real
+    # barge-in) has to survive, or the feature would just be a mute switch.
+    queue = asyncio.Queue()
+    vad = _ScriptedVad([0.9, 0.9, 0.9, 0.1, 0.1, 0.1])
+    chunks = [_chunk(100)] * 3 + [_chunk(0)] * 3
+    await _feed(queue, chunks)
+    pipeline = AudioPipeline(
+        queue, vad, silence_duration_ms=20.0, min_speech_duration_ms=20.0,
+        apply_noise_reduction=False, echo_gate=_NeverEchoGate(),
+    )
+
+    utterances = [u async for u in pipeline.run()]
+
+    assert len(utterances) == 1

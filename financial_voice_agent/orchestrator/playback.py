@@ -17,11 +17,18 @@ class AudioPlayback:
         channels: int = 1,
         output_device_index: int | None = None,
         pyaudio_factory=pyaudio.PyAudio,
+        playback_reference=None,
     ) -> None:
         self._sample_rate = sample_rate
         self._channels = channels
         self._output_device_index = output_device_index
         self._pyaudio_factory = pyaudio_factory
+        # Optional PlaybackReference (financial_voice_agent/audio/echo.py).
+        # Recording what we send to the speaker is what lets the mic side
+        # tell our own voice apart from a user interrupting us, which is
+        # what makes barge-in work on open speakers rather than only on
+        # headphones.
+        self._playback_reference = playback_reference
         self._pa = None
         self._stream = None
 
@@ -39,7 +46,14 @@ class AudioPlayback:
         for offset in range(0, len(pcm_bytes), chunk_size):
             if interrupt_event is not None and interrupt_event.is_set():
                 return False
-            self._stream.write(pcm_bytes[offset : offset + chunk_size])
+            chunk = pcm_bytes[offset : offset + chunk_size]
+            # Recorded per chunk rather than once up front: stream.write()
+            # blocks until the device has buffer space, so this loop is
+            # paced roughly with real playback, giving the reference
+            # sensible timestamps to compare mic audio against.
+            if self._playback_reference is not None:
+                self._playback_reference.note_played(chunk)
+            self._stream.write(chunk)
         return True
 
     def close(self) -> None:

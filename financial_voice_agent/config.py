@@ -7,6 +7,12 @@ from dataclasses import dataclass
 import yaml
 from dotenv import dotenv_values
 
+# Mirrors audio.echo.DEFAULT_MARGIN. Duplicated as a literal rather than
+# imported so that loading config doesn't drag in the audio stack (numpy,
+# noisereduce, torch) -- the eval harness and tests load config without
+# touching audio at all.
+_DEFAULT_ECHO_MARGIN = 2.0
+
 _VALID_TTS_PROVIDERS = {"cartesia", "deepgram"}
 _VALID_STT_PROVIDERS = {"groq", "huggingface"}
 _VALID_LLM_PROVIDERS = {"groq", "huggingface"}
@@ -25,6 +31,8 @@ class Config:
     barge_in_enabled: bool
     audio_output_device_index: int | None
     audio_input_device_index: int | None
+    echo_suppression_enabled: bool
+    echo_margin: float
     input_mode: str
     tts_provider: str
     cartesia_voice_id: str | None
@@ -126,6 +134,8 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             barge_in_enabled=raw["vad"].get("barge_in_enabled", True),
             audio_output_device_index=raw["audio"]["output_device_index"],
             audio_input_device_index=raw["audio"].get("input_device_index"),
+            echo_suppression_enabled=raw["audio"].get("echo_suppression", True),
+            echo_margin=raw["audio"].get("echo_margin", _DEFAULT_ECHO_MARGIN),
             input_mode=raw["input_mode"],
             tts_provider=tts_provider,
             cartesia_voice_id=cartesia_voice_id,
