@@ -15,7 +15,11 @@ use canned fixture data for Kite-backed tools instead.
 from __future__ import annotations
 
 import getpass
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from financial_voice_agent.setup.config_template import render_config_yaml
 from financial_voice_agent.setup.env_file import merge_env_values, read_env_file, write_env_file
@@ -27,7 +31,8 @@ from financial_voice_agent.setup.validators import (
     validate_tavily_key,
 )
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+ENV_PATH = REPO_ROOT / ".env"
+CONFIG_PATH = REPO_ROOT / "config.yaml"
 ENV_PATH = REPO_ROOT / ".env"
 CONFIG_PATH = REPO_ROOT / "config.yaml"
 
