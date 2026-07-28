@@ -33,8 +33,6 @@ from financial_voice_agent.setup.validators import (
 
 ENV_PATH = REPO_ROOT / ".env"
 CONFIG_PATH = REPO_ROOT / "config.yaml"
-ENV_PATH = REPO_ROOT / ".env"
-CONFIG_PATH = REPO_ROOT / "config.yaml"
 
 
 def _ask_choice(prompt: str, options: list[str], default: str) -> str:
