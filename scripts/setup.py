@@ -18,6 +18,8 @@ import getpass
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -89,6 +91,9 @@ def main() -> None:
         write_config = _ask_yes_no(
             "Found an existing config.yaml. Regenerate it from your choices below?", default=False
         )
+        if not write_config:
+            print("  Keeping existing config.yaml as-is -- your provider/mode selections above will NOT be applied to it.")
+            print("  Edit config.yaml by hand if you want to change providers or mode.")
 
     new_env: dict[str, str] = {}
     cartesia_voice_id = ""
@@ -147,7 +152,7 @@ def main() -> None:
 
     if write_config:
         stt_model = "whisper-large-v3-turbo" if stt_provider == "groq" else "openai/whisper-large-v3-turbo"
-        llm_model = "qwen/qwen3.6-27b"
+        llm_model = "qwen/qwen3.6-27b" if llm_provider == "groq" else "<pick a vision+tool-calling model - see Financial_Voice_Agent.claude.md>"
         config_text = render_config_yaml(
             stt_provider=stt_provider,
             stt_model=stt_model,
@@ -158,11 +163,30 @@ def main() -> None:
         )
         CONFIG_PATH.write_text(config_text)
         print(f"Wrote {CONFIG_PATH}")
+        if llm_provider == "huggingface":
+            print("  Note: Hugging Face vision+tool-calling models are rare. Edit config.yaml to set llm.model")
+            print("  to a verified model id before running the agent. See Financial_Voice_Agent.claude.md for guidance.")
 
     print("\nNext steps:")
-    if mode == "live":
-        print("  1. python scripts/kite_login.py   (get today's Kite access token)")
-        print("  2. python -m financial_voice_agent")
+
+    # Determine the actual mode: if config wasn't rewritten, read from disk
+    effective_mode = mode
+    if not write_config:
+        try:
+            config_data = yaml.safe_load(CONFIG_PATH.read_text())
+            effective_mode = config_data.get("mode", mode) if config_data else mode
+        except Exception:
+            effective_mode = mode
+
+    if effective_mode == "live":
+        # Check if Kite env vars are present
+        if "KITE_API_KEY" not in merged_env or "KITE_API_SECRET" not in merged_env:
+            print("  1. Add KITE_API_KEY and KITE_API_SECRET to .env (get from developers.kite.trade)")
+            print("  2. python scripts/kite_login.py   (get today's Kite access token)")
+            print("  3. python -m financial_voice_agent")
+        else:
+            print("  1. python scripts/kite_login.py   (get today's Kite access token)")
+            print("  2. python -m financial_voice_agent")
     else:
         print("  1. python -m financial_voice_agent")
 
