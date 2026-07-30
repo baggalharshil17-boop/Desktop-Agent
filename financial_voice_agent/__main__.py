@@ -93,7 +93,7 @@ async def main() -> None:
         )
         overlay_sender = make_overlay_sender()
 
-    tool_executor = make_tool_executor(config, http_clients)
+    tool_executor = make_tool_executor(config, http_clients, overlay_sender=overlay_sender)
     tts_client = RealCartesiaTtsClient(
         AsyncCartesia(api_key=config.cartesia_api_key), voice_id=config.cartesia_voice_id
     )

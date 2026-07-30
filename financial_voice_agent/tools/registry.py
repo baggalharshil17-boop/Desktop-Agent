@@ -5,6 +5,7 @@ import pathlib
 from typing import Awaitable, Callable
 
 from financial_voice_agent.orchestrator.llm import ToolCall
+from financial_voice_agent.tools.charting import UnknownChartIndicatorError, render_chart
 from financial_voice_agent.tools.history import get_ohlc_history
 from financial_voice_agent.tools.indicators import InsufficientDataError, compute_indicator
 from financial_voice_agent.tools.instruments import InstrumentNotFoundError
@@ -113,10 +114,37 @@ TOOLS_SCHEMA = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "show_chart",
+            "description": (
+                "Render and display a candlestick chart for an instrument, optionally with "
+                "technical indicator overlays."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "indicators": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["moving_average", "bollinger", "rsi", "fibonacci"],
+                        },
+                        "description": "Optional list of indicators to overlay on the chart.",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
 ]
 
 
-async def _dispatch(call: ToolCall, config, http_clients, instrument_cache: dict) -> dict:
+async def _dispatch(
+    call: ToolCall, config, http_clients, instrument_cache: dict, overlay_sender: Callable[[str], None] | None
+) -> dict:
     if call.name == "get_quote":
         return await get_quote(
             **call.arguments, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
@@ -149,10 +177,24 @@ async def _dispatch(call: ToolCall, config, http_clients, instrument_cache: dict
         )
     if call.name == "capture_screen":
         return await capture_screen(window_finder=find_kite_window, screenshot_fn=capture_region)
+    if call.name == "show_chart":
+        history_fn = functools.partial(
+            get_ohlc_history,
+            http_client=http_clients.kite,
+            mode=config.mode,
+            fixtures_dir=_FIXTURES_DIR,
+            instrument_cache=instrument_cache,
+        )
+        path = await render_chart(**call.arguments, history_fn=history_fn)
+        if overlay_sender is not None:
+            overlay_sender(f"show_chart:{path}")
+        return {"chart_path": path}
     raise UnknownToolError(f"Unknown tool: {call.name}")
 
 
-def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[dict]]:
+def make_tool_executor(
+    config, http_clients, overlay_sender: Callable[[str], None] | None = None
+) -> Callable[[ToolCall], Awaitable[dict]]:
     # Kite's instrument dump is meant to be fetched at most once a day (per
     # Kite's own docs), so this cache is created once here and shared across
     # every get_ohlc_history/compute_indicator call for this executor's
@@ -161,7 +203,7 @@ def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[d
 
     async def executor(call: ToolCall) -> dict:
         try:
-            return await _dispatch(call, config, http_clients, instrument_cache)
+            return await _dispatch(call, config, http_clients, instrument_cache, overlay_sender)
         except KiteSessionExpiredError:
             return {"error": "Kite session expired, please log in again"}
         except KiteRateLimitedError:
@@ -174,6 +216,8 @@ def make_tool_executor(config, http_clients) -> Callable[[ToolCall], Awaitable[d
             return {"error": str(exc)}
         except WindowNotFoundError:
             return {"error": "Could not find the Kite window on screen"}
+        except UnknownChartIndicatorError as exc:
+            return {"error": str(exc)}
         except TypeError as exc:
             return {"error": f"Invalid arguments for tool '{call.name}': {exc}"}
         except UnknownToolError:

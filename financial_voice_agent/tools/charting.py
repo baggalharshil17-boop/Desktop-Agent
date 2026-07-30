@@ -5,6 +5,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
+import matplotlib
+
+# This module only ever saves figures to disk (mpf.plot(..., savefig=path)) and
+# never displays them, so it must not depend on a GUI toolkit (e.g. Tk) being
+# available/working on the host machine. The backend has to be selected before
+# mplfinance (which imports matplotlib.pyplot) picks one on its own.
+matplotlib.use("Agg")
+
 import mplfinance as mpf
 import pandas as pd
 

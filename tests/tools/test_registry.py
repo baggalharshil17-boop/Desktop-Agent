@@ -14,7 +14,7 @@ class _FakeHttpClients:
     tavily = None  # overridden per-test where get_news is exercised
 
 
-def test_tools_schema_names_match_all_six_tools():
+def test_tools_schema_names_include_all_expected_tools():
     names = {tool["function"]["name"] for tool in TOOLS_SCHEMA}
     assert names == {
         "get_quote",
@@ -23,6 +23,7 @@ def test_tools_schema_names_match_all_six_tools():
         "get_positions_holdings",
         "get_news",
         "capture_screen",
+        "show_chart",
     }
 
 
@@ -152,3 +153,52 @@ async def test_executor_dispatches_get_news_in_mock_mode_without_network():
 
     assert "error" not in result
     assert len(result["headlines"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_executor_dispatches_show_chart_in_mock_mode_and_returns_chart_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # so the "charts/" dir render_chart creates lands in tmp_path
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(
+        ToolCall(id="1", name="show_chart", arguments={"symbol": "RELIANCE", "indicators": ["moving_average"]})
+    )
+
+    assert "error" not in result
+    assert result["chart_path"].endswith(".png")
+    import os
+    assert os.path.exists(result["chart_path"])
+
+
+@pytest.mark.asyncio
+async def test_executor_sends_show_chart_message_to_overlay_sender(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    sent_messages = []
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients(), overlay_sender=sent_messages.append)
+
+    result = await executor(ToolCall(id="1", name="show_chart", arguments={"symbol": "RELIANCE"}))
+
+    assert len(sent_messages) == 1
+    assert sent_messages[0] == f"show_chart:{result['chart_path']}"
+
+
+@pytest.mark.asyncio
+async def test_executor_show_chart_works_without_overlay_sender(tmp_path, monkeypatch):
+    # overlay_sender defaults to None -- must not raise when the overlay is disabled.
+    monkeypatch.chdir(tmp_path)  # so the "charts/" dir render_chart creates lands in tmp_path
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(ToolCall(id="1", name="show_chart", arguments={"symbol": "RELIANCE"}))
+
+    assert "error" not in result
+
+
+@pytest.mark.asyncio
+async def test_executor_show_chart_returns_error_on_unknown_indicator():
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(
+        ToolCall(id="1", name="show_chart", arguments={"symbol": "RELIANCE", "indicators": ["macd"]})
+    )
+
+    assert "error" in result
