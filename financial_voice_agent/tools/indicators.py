@@ -69,45 +69,59 @@ async def compute_indicator(
 
 
 def _bollinger_bands(closes: pd.Series, *, window: int) -> dict:
-    sma = closes.rolling(window).mean()
-    std = closes.rolling(window).std(ddof=0)
-    upper = sma + 2 * std
-    lower = sma - 2 * std
+    middle, upper, lower = bollinger_bands_series(closes, window=window)
     return {
-        "middle_band": float(sma.iloc[-1]),
+        "middle_band": float(middle.iloc[-1]),
         "upper_band": float(upper.iloc[-1]),
         "lower_band": float(lower.iloc[-1]),
     }
 
 
+def bollinger_bands_series(closes: pd.Series, *, window: int) -> tuple[pd.Series, pd.Series, pd.Series]:
+    sma = closes.rolling(window).mean()
+    std = closes.rolling(window).std(ddof=0)
+    return sma, sma + 2 * std, sma - 2 * std
+
+
 def _moving_average(closes: pd.Series, *, window: int) -> dict:
-    return {"moving_average": float(closes.rolling(window).mean().iloc[-1])}
+    return {"moving_average": float(moving_average_series(closes, window=window).iloc[-1])}
+
+
+def moving_average_series(closes: pd.Series, *, window: int) -> pd.Series:
+    return closes.rolling(window).mean()
 
 
 def _rsi(closes: pd.Series, *, window: int) -> dict:
+    return {"rsi": float(rsi_series(closes, window=window).iloc[-1])}
+
+
+def rsi_series(closes: pd.Series, *, window: int) -> pd.Series:
     delta = closes.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     avg_gain = gain.rolling(window).mean()
     avg_loss = loss.rolling(window).mean()
-    last_avg_loss = avg_loss.iloc[-1]
-    if last_avg_loss == 0:
-        return {"rsi": 100.0}
-    rs = avg_gain.iloc[-1] / last_avg_loss
-    return {"rsi": float(100 - (100 / (1 + rs)))}
+    # avg_loss.replace(0, nan) avoids a literal division-by-zero warning;
+    # .where(...) below then fills those positions with the correct RSI=100
+    # (no losses at all in the window means maximally overbought).
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.where(avg_loss != 0, 100.0)
 
 
 def _fibonacci_retracement(closes: pd.Series) -> dict:
+    return {"fibonacci_levels": fibonacci_levels(closes)}
+
+
+def fibonacci_levels(closes: pd.Series) -> dict:
     high = float(closes.max())
     low = float(closes.min())
     diff = high - low
     return {
-        "fibonacci_levels": {
-            "0.0%": high,
-            "23.6%": high - 0.236 * diff,
-            "38.2%": high - 0.382 * diff,
-            "50.0%": high - 0.5 * diff,
-            "61.8%": high - 0.618 * diff,
-            "100.0%": low,
-        }
+        "0.0%": high,
+        "23.6%": high - 0.236 * diff,
+        "38.2%": high - 0.382 * diff,
+        "50.0%": high - 0.5 * diff,
+        "61.8%": high - 0.618 * diff,
+        "100.0%": low,
     }

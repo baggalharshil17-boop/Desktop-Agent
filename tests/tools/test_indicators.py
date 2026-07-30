@@ -1,6 +1,20 @@
+import asyncio
+
+import pandas as pd
 import pytest
 
-from financial_voice_agent.tools.indicators import InsufficientDataError, compute_indicator
+from financial_voice_agent.tools.indicators import (
+    InsufficientDataError,
+    bollinger_bands_series,
+    compute_indicator,
+    fibonacci_levels,
+    moving_average_series,
+    rsi_series,
+)
+
+
+def await_helper(coro):
+    return asyncio.run(coro)
 
 
 def _make_history_fn(closes: list[float]):
@@ -105,3 +119,65 @@ async def test_compute_indicator_defaults_params_to_empty_dict_when_omitted():
     result = await compute_indicator("RELIANCE", "moving_average", history_fn=history_fn)
 
     assert result["moving_average"] == pytest.approx(100.0)
+
+
+def test_moving_average_series_last_value_matches_scalar_result():
+    closes = pd.Series([float(i) for i in range(1, 21)])
+
+    series = moving_average_series(closes, window=20)
+
+    assert series.iloc[-1] == pytest.approx(10.5)
+    assert len(series) == 20
+
+
+def test_bollinger_bands_series_returns_three_series_of_matching_length():
+    closes = pd.Series([100.0] * 20)
+
+    middle, upper, lower = bollinger_bands_series(closes, window=20)
+
+    assert middle.iloc[-1] == pytest.approx(100.0)
+    assert upper.iloc[-1] == pytest.approx(100.0)
+    assert lower.iloc[-1] == pytest.approx(100.0)
+    assert len(middle) == len(upper) == len(lower) == 20
+
+
+def test_rsi_series_all_gains_last_value_is_100():
+    closes = pd.Series([float(i) for i in range(1, 21)])
+
+    series = rsi_series(closes, window=14)
+
+    assert series.iloc[-1] == pytest.approx(100.0)
+
+
+def test_rsi_series_matches_scalar_compute_indicator_result():
+    import numpy as np
+
+    np.random.seed(0)
+    closes = pd.Series(100 + np.cumsum(np.random.randn(40)))
+
+    async def history_fn(*, symbol, interval, from_date, to_date):
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "candles": [
+                {"ts": f"t{i}", "open": c, "high": c, "low": c, "close": c, "volume": 100}
+                for i, c in enumerate(closes)
+            ],
+        }
+
+    scalar_result = await_helper(
+        compute_indicator("RELIANCE", "rsi", {"window": 14}, history_fn=history_fn)
+    )
+    series = rsi_series(closes, window=14)
+
+    assert series.iloc[-1] == pytest.approx(scalar_result["rsi"])
+
+
+def test_fibonacci_levels_returns_same_shape_as_compute_indicator():
+    closes = pd.Series([100.0, 150.0, 120.0])
+
+    levels = fibonacci_levels(closes)
+
+    assert levels["0.0%"] == pytest.approx(150.0)
+    assert levels["100.0%"] == pytest.approx(100.0)
+    assert levels["50.0%"] == pytest.approx(125.0)
