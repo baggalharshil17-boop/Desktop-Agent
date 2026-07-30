@@ -16,3 +16,4 @@ janus
 cartesia
 mss
 pygetwindow
+mplfinance

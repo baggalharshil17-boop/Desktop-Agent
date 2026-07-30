@@ -2,5 +2,6 @@
 .env
 *.db
 screenshots/
+charts/
 __pycache__/
 .pytest_cache/
