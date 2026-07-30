@@ -52,6 +52,7 @@ class Config:
     kite_api_key: str | None
     kite_access_token: str | None
     tavily_api_key: str | None
+    indian_stock_api_key: str | None
 
 
 def _load_env(env_path: str) -> dict[str, str]:
@@ -65,6 +66,7 @@ def _load_env(env_path: str) -> dict[str, str]:
         "KITE_API_KEY",
         "KITE_ACCESS_TOKEN",
         "TAVILY_API_KEY",
+        "INDIAN_STOCK_API_KEY",
     ):
         if key in os.environ:
             merged[key] = os.environ[key]
@@ -158,6 +160,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             kite_api_key=env.get("KITE_API_KEY"),
             kite_access_token=env.get("KITE_ACCESS_TOKEN"),
             tavily_api_key=env.get("TAVILY_API_KEY"),
+            indian_stock_api_key=env.get("INDIAN_STOCK_API_KEY"),
         )
     except ConfigError:
         raise

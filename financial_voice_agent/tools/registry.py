@@ -6,6 +6,7 @@ from typing import Awaitable, Callable
 
 from financial_voice_agent.orchestrator.llm import ToolCall
 from financial_voice_agent.tools.charting import UnknownChartIndicatorError, render_chart
+from financial_voice_agent.tools.fundamentals import get_stock_fundamentals
 from financial_voice_agent.tools.history import get_ohlc_history
 from financial_voice_agent.tools.indicators import InsufficientDataError, compute_indicator
 from financial_voice_agent.tools.instruments import InstrumentNotFoundError
@@ -139,6 +140,23 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_stock_fundamentals",
+            "description": (
+                "Get fundamental data (P/E ratio, market cap, 52-week range) for a company "
+                "by name -- also resolves fuzzy/partial company names."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Company name, e.g. 'Reliance' or 'HDFC Bank'"}
+                },
+                "required": ["name"],
+            },
+        },
+    },
 ]
 
 
@@ -189,6 +207,11 @@ async def _dispatch(
         if overlay_sender is not None:
             overlay_sender(f"show_chart:{path}")
         return {"chart_path": path}
+    if call.name == "get_stock_fundamentals":
+        return await get_stock_fundamentals(
+            **call.arguments, http_client=http_clients.indian_stock, mode=config.mode,
+            fixtures_dir=_FIXTURES_DIR,
+        )
     raise UnknownToolError(f"Unknown tool: {call.name}")
 
 

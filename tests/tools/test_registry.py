@@ -12,6 +12,7 @@ class _FakeConfig:
 class _FakeHttpClients:
     kite = None  # unused in mock mode
     tavily = None  # overridden per-test where get_news is exercised
+    indian_stock = None  # unused in mock mode
 
 
 def test_tools_schema_names_include_all_expected_tools():
@@ -24,6 +25,7 @@ def test_tools_schema_names_include_all_expected_tools():
         "get_news",
         "capture_screen",
         "show_chart",
+        "get_stock_fundamentals",
     }
 
 
@@ -202,3 +204,13 @@ async def test_executor_show_chart_returns_error_on_unknown_indicator():
     )
 
     assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_executor_dispatches_get_stock_fundamentals_in_mock_mode():
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(ToolCall(id="1", name="get_stock_fundamentals", arguments={"name": "Reliance"}))
+
+    assert result["company_name"] == "Reliance Industries"
+    assert "error" not in result

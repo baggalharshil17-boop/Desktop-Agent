@@ -11,6 +11,7 @@ CARTESIA_BASE_URL = "https://api.cartesia.ai"
 DEEPGRAM_BASE_URL = "https://api.deepgram.com"
 KITE_BASE_URL = "https://api.kite.trade"
 TAVILY_BASE_URL = "https://api.tavily.com"
+INDIAN_STOCK_BASE_URL = "https://stock.indianapi.in"
 
 GROQ_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 REST_TIMEOUT = httpx.Timeout(15.0, connect=10.0)
@@ -23,6 +24,7 @@ class HTTPClients:
     tts: httpx.AsyncClient
     kite: httpx.AsyncClient
     tavily: httpx.AsyncClient
+    indian_stock: httpx.AsyncClient
 
 
 async def create_http_clients(config: Config) -> HTTPClients:
@@ -61,7 +63,13 @@ async def create_http_clients(config: Config) -> HTTPClients:
 
     tavily = httpx.AsyncClient(base_url=TAVILY_BASE_URL, timeout=REST_TIMEOUT)
 
-    return HTTPClients(groq=groq, tts=tts, kite=kite, tavily=tavily)
+    indian_stock = httpx.AsyncClient(
+        base_url=INDIAN_STOCK_BASE_URL,
+        headers={"X-Api-Key": config.indian_stock_api_key or ""},
+        timeout=REST_TIMEOUT,
+    )
+
+    return HTTPClients(groq=groq, tts=tts, kite=kite, tavily=tavily, indian_stock=indian_stock)
 
 
 async def close_http_clients(clients: HTTPClients) -> None:
@@ -69,3 +77,4 @@ async def close_http_clients(clients: HTTPClients) -> None:
     await clients.tts.aclose()
     await clients.kite.aclose()
     await clients.tavily.aclose()
+    await clients.indian_stock.aclose()
