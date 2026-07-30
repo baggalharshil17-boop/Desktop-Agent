@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from financial_voice_agent import db
+
+# Matches markdown syntax an LLM might produce even when told not to --
+# stripped before TTS so it's never spoken aloud literally (e.g. "asterisk
+# asterisk"). Order matters: bold (**/__) must run before italic (*/_) so a
+# **bold** span doesn't get treated as two italic markers.
+_MD_HEADER_RE = re.compile(r"^#{1,6}\s*", re.MULTILINE)
+_MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
+_MD_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)\*(?!\*)|(?<!_)_(?!_)(.+?)_(?!_)")
+_MD_BULLET_RE = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
+_MD_NUMBERED_RE = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
+
+
+def strip_markdown_for_speech(text: str) -> str:
+    text = _MD_HEADER_RE.sub("", text)
+    text = _MD_BOLD_RE.sub(lambda m: m.group(1) or m.group(2), text)
+    text = _MD_ITALIC_RE.sub(lambda m: m.group(1) or m.group(2), text)
+    text = _MD_BULLET_RE.sub("", text)
+    text = _MD_NUMBERED_RE.sub("", text)
+    return text
 
 
 @dataclass(frozen=True)
@@ -59,7 +79,7 @@ async def run_turn(
         latency_llm_ms = round((clock_fn() - llm_start) * 1000)
 
         tts_start = clock_fn()
-        tts_audio = await tts_fn(llm_result.response_text)
+        tts_audio = await tts_fn(strip_markdown_for_speech(llm_result.response_text))
         latency_tts_ms = round((clock_fn() - tts_start) * 1000)
     except Exception as exc:  # noqa: BLE001 -- a turn must never crash the caller
         error = str(exc)

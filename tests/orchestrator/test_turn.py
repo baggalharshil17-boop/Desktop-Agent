@@ -3,7 +3,13 @@ import sqlite3
 import pytest
 
 from financial_voice_agent.db import init_db
-from financial_voice_agent.orchestrator.turn import LlmTurnResult, TurnResult, run_turn, update_history
+from financial_voice_agent.orchestrator.turn import (
+    LlmTurnResult,
+    TurnResult,
+    run_turn,
+    strip_markdown_for_speech,
+    update_history,
+)
 
 
 def _fake_monotonic(values):
@@ -131,3 +137,70 @@ def test_update_history_does_not_mutate_input():
 
     assert len(original) == 2
     assert len(result) == 4
+
+
+def test_strip_markdown_for_speech_removes_bold():
+    assert strip_markdown_for_speech("The P/E ratio is **8.64**.") == "The P/E ratio is 8.64."
+    assert strip_markdown_for_speech("This is __also bold__.") == "This is also bold."
+
+
+def test_strip_markdown_for_speech_removes_italic():
+    assert strip_markdown_for_speech("This is *emphasized* text.") == "This is emphasized text."
+    assert strip_markdown_for_speech("This is _also emphasized_.") == "This is also emphasized."
+
+
+def test_strip_markdown_for_speech_removes_headers():
+    assert strip_markdown_for_speech("# Heading\nBody text") == "Heading\nBody text"
+    assert strip_markdown_for_speech("### Smaller heading") == "Smaller heading"
+
+
+def test_strip_markdown_for_speech_removes_bullet_markers():
+    text = "Recent news includes:\n- First point\n* Second point\n+ Third point"
+    assert strip_markdown_for_speech(text) == "Recent news includes:\nFirst point\nSecond point\nThird point"
+
+
+def test_strip_markdown_for_speech_removes_numbered_list_markers():
+    text = "Steps:\n1. Do this\n2. Do that"
+    assert strip_markdown_for_speech(text) == "Steps:\nDo this\nDo that"
+
+
+def test_strip_markdown_for_speech_handles_real_world_example():
+    text = (
+        "Here is the update on ONGC:\n\n"
+        "The **P/E ratio** is 8.64.\n\n"
+        "Recent news includes:\n"
+        "- ONGC plans to build a large strategic petroleum reserve.\n"
+        "- Three Executive Directors recently retired."
+    )
+    result = strip_markdown_for_speech(text)
+    assert "*" not in result
+    assert "- " not in result
+    assert "P/E ratio" in result
+    assert "ONGC plans to build a large strategic petroleum reserve." in result
+
+
+def test_strip_markdown_for_speech_leaves_plain_text_unchanged():
+    assert strip_markdown_for_speech("Just a plain sentence.") == "Just a plain sentence."
+
+
+@pytest.mark.asyncio
+async def test_run_turn_strips_markdown_before_calling_tts_fn(tmp_path):
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    captured_tts_text = []
+
+    async def stt_fn(wav_bytes):
+        return "hello"
+
+    async def llm_fn(transcript, history):
+        return LlmTurnResult(
+            response_text="The **P/E ratio** is 8.64.", tool_calls_json=None, tool_results_json=None
+        )
+
+    async def tts_fn(text):
+        captured_tts_text.append(text)
+        return b"audio-bytes"
+
+    await run_turn(b"wav-bytes", [], stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path)
+
+    assert captured_tts_text == ["The P/E ratio is 8.64."]
