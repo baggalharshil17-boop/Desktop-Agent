@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol
@@ -39,7 +40,11 @@ _UNTRUSTED_PREAMBLE = (
 def wrap_tool_result(tool_name: str, content: str) -> str:
     if tool_name not in _UNTRUSTED_CONTENT_TOOLS:
         return content
-    return f"{_UNTRUSTED_PREAMBLE}\n<untrusted_tool_output>\n{content}\n</untrusted_tool_output>"
+    # Random per-call tag id. JSON escaping leaves "<" and ">" alone, so with a
+    # fixed tag name the content itself could emit a closing tag and appear to
+    # continue outside the untrusted region; an unguessable id removes that.
+    tag = f"untrusted_tool_output_{secrets.token_hex(8)}"
+    return f"{_UNTRUSTED_PREAMBLE}\n<{tag}>\n{content}\n</{tag}>"
 
 
 @dataclass(frozen=True)

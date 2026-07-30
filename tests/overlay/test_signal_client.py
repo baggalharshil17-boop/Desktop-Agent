@@ -85,6 +85,15 @@ def test_decode_message_preserves_a_message_body_containing_separators():
     assert decode_message("tok123", encode_message("tok123", body)) == body
 
 
+def test_decode_message_rejects_non_ascii_token_without_raising():
+    # secrets.compare_digest raises TypeError on non-ASCII str. The token
+    # prefix is attacker-controlled, so a single such datagram would otherwise
+    # propagate out of decode_message and kill the listener thread for good,
+    # leaving the overlay permanently deaf.
+    assert decode_message("tok123", "é processing_on") is None
+    assert decode_message("tok123", "你好 processing_on") is None
+
+
 def test_generate_overlay_token_is_unguessable_and_unique():
     tokens = {generate_overlay_token() for _ in range(50)}
 

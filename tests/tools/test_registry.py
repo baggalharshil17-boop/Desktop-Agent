@@ -122,6 +122,19 @@ async def test_executor_drops_undeclared_arguments_instead_of_crashing():
 
 
 @pytest.mark.asyncio
+async def test_executor_still_reports_missing_required_arguments_as_an_error():
+    # The schema filter drops *undeclared* keys, but a declared-yet-missing
+    # required one must still surface as a spoken error rather than crash the
+    # turn -- this keeps the executor's `except TypeError` branch covered.
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(ToolCall(id="1", name="get_quote", arguments={}))
+
+    assert "error" in result
+    assert "get_quote" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_executor_translates_unexpected_exceptions_to_error_dict_instead_of_crashing():
     # A raw exception this executor doesn't specifically recognize (e.g. an
     # httpx.HTTPStatusError from a Kite error code this code doesn't handle

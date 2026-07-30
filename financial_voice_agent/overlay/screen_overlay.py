@@ -2,9 +2,17 @@
 Agent. Shows a click-through edge glow while the agent is processing, and a
 sliding chart panel when a chart is rendered. Launched by __main__.py as a
 subprocess (see financial_voice_agent/overlay/signal_client.py for the
-message protocol this listens for). Run directly for manual testing:
+message protocol this listens for).
 
+Datagrams must carry the per-run token the agent generates and passes down in
+FVA_OVERLAY_TOKEN, so launching this directly leaves it deaf unless you set
+that yourself:
+
+    set FVA_OVERLAY_TOKEN=dev-token
     python -m financial_voice_agent.overlay.screen_overlay
+
+Normally just run the agent (python -m financial_voice_agent), which starts
+this and wires the token automatically.
 """
 
 from __future__ import annotations
@@ -85,11 +93,13 @@ def _listen(inbox: "queue.Queue[str]", port: int, token: str | None) -> None:
         )
     while True:
         data, _addr = sock.recvfrom(2048)
+        # Every datagram here is untrusted and attacker-reachable, so no single
+        # malformed one may be allowed to kill this thread -- that would leave
+        # the overlay silently deaf for the rest of the run.
         try:
-            datagram = data.decode("utf-8")
-        except UnicodeDecodeError:
+            message = decode_message(token, data.decode("utf-8"))
+        except Exception:  # noqa: BLE001
             continue
-        message = decode_message(token, datagram)
         if message is None:
             continue  # unauthenticated or malformed -- not from our agent
         inbox.put(message)

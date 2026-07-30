@@ -42,8 +42,11 @@ def decode_message(expected_token: str | None, datagram: str) -> str | None:
     token, separator, message = datagram.partition(_TOKEN_SEPARATOR)
     if not separator:
         return None
-    # compare_digest to keep the check constant-time.
-    if not secrets.compare_digest(token, expected_token):
+    # compare_digest to keep the check constant-time. Compare the UTF-8 bytes,
+    # not the str: compare_digest raises TypeError on a str containing
+    # non-ASCII, and `token` here is attacker-controlled -- one such datagram
+    # would otherwise propagate out and kill the listener thread for good.
+    if not secrets.compare_digest(token.encode("utf-8"), expected_token.encode("utf-8")):
         return None
     return message
 
