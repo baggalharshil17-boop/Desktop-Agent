@@ -12,7 +12,7 @@ Read-only AI voice assistant for Zerodha Kite trading dashboard. Listens continu
 **Model stack:**
 - Speech-to-text: Groq Whisper Large v3 Turbo (~$0.04/hour audio, ~228x RT), **or** Hugging Face Inference (`huggingface_hub.AsyncInferenceClient.automatic_speech_recognition`, provider `"hf-inference"`) — config-driven via `stt.provider`, built as a fallback for when one vendor's free credits run out
 - Reasoning + tools + vision: Groq multimodal tool-calling model (check console.groq.com/docs/models — model catalog churns), **or** Hugging Face Inference chat completions (`AsyncInferenceClient.chat_completion`, provider `"auto"` — `"hf-inference"` itself doesn't serve most chat/vision models, `"auto"` routes to whichever partner provider does) — config-driven via `llm.provider`. As of this build, `qwen/qwen3.6-27b` on Groq is the verified model supporting both tool calling and vision together; it defaults to an extended "thinking mode" that must be disabled via `reasoning_effort: "none"` (Qwen/gpt-oss-specific param) or every call costs tens of seconds of unwanted reasoning latency
-- TTS: Cartesia Sonic (primary, ~40–90ms time-to-first-audio) or Deepgram Aura-2 (fallback, ~300ms — **not implemented**, only Cartesia has a real adapter so far)
+- TTS: Cartesia Sonic (primary, ~40–90ms time-to-first-audio) or Fish Audio (fallback, REST-based, ~100–200ms — requires `FISH_AUDIO_API_KEY` and voice selection)
 - Tools: local Python functions, not MCP server (no need for v1)
 
 **Both STT and LLM providers are swappable per-vendor at runtime via config.yaml**, not hardcoded to Groq as originally scoped — see Configuration section below. This exists because free-tier credits on either vendor can run out mid-session; switching providers is a config edit plus a token, not a code change.
@@ -120,7 +120,7 @@ CREATE TABLE turns (
 | STT (Groq/HF) | Timeout or 5xx | Retry 2x with 1s backoff. On final fail: speak a varied "didn't catch that" phrase (not the same wording every time), re-listen |
 | LLM (Groq/HF) | 429 rate limit | Exponential backoff; speak a varied "hit a usage limit" phrase |
 | LLM (Groq/HF) | Any other failure (with a transcript already in hand) | Speak a varied *generic*-failure phrase, distinct from the STT one — saying "didn't catch that" when STT actually succeeded is a lie the user will notice |
-| Cartesia TTS | Timeout or 5xx | Retry once. Fall back to Deepgram (if configured — **no Deepgram adapter built yet**) or logged error |
+| Cartesia TTS | Timeout or 5xx | Retry once. Fall back to Fish Audio (if configured) or logged error |
 | Kite Connect | 401, or 403 with `error_type: "TokenException"` | Both mean expired/invalid `access_token` — **confirmed live that Kite returns 403, not 401, for this** (`{"error_type":"TokenException","message":"Incorrect api_key or access_token."}`); code must check both status codes and the JSON body, not just status |
 | Kite Connect | 403 with `error_type: "PermissionException"` | Real account-level restriction (e.g. no active paid Kite Connect subscription for historical data) — **not** a token problem, must not be treated as "log in again"; surface the real message so the user knows to check their Zerodha subscription |
 | Kite Connect | 429/503 | Per-tool policy in tool table (Section 6) |
@@ -199,7 +199,7 @@ live) never trigger it — acking every tool call made the agent sound repetitiv
 
 **Runtime:** Python 3.11+
 
-**APIs & SDKs:** groq (STT+LLM) and/or huggingface_hub (config-driven alternative for both), cartesia (TTS) or deepgram-sdk (**not implemented**), pyaudio, silero-vad, noisereduce, janus (thread-safe async queue — **critical for Section 11.2 bug**), mss, pygetwindow (Windows) / pyobjc-framework-Quartz (macOS), pandas, numpy, ta, httpx (reused per Section 14), sqlite3 (stdlib), pyyaml or python-dotenv, kiteconnect (only used by `scripts/kite_login.py`'s one-off daily token exchange, not by the live agent itself, which speaks raw Kite REST via httpx)
+**APIs & SDKs:** groq (STT+LLM) and/or huggingface_hub (config-driven alternative for both), cartesia (TTS) or fish_audio (REST-based TTS via httpx), pyaudio, silero-vad, noisereduce, janus (thread-safe async queue — **critical for Section 11.2 bug**), mss, pygetwindow (Windows) / pyobjc-framework-Quartz (macOS), pandas, numpy, ta, httpx (reused per Section 14), sqlite3 (stdlib), pyyaml or python-dotenv, kiteconnect (only used by `scripts/kite_login.py`'s one-off daily token exchange, not by the live agent itself, which speaks raw Kite REST via httpx)
 
 **HTTP client:** httpx.AsyncClient (one per vendor, created at startup, reused)
 
@@ -208,7 +208,7 @@ live) never trigger it — acking every tool call made the agent sound repetitiv
 **Environment variables (see `.env.example`):**
 - `GROQ_API_KEY` — required only if `stt.provider` or `llm.provider` is `"groq"`
 - `HF_TOKEN` — required only if `stt.provider` or `llm.provider` is `"huggingface"` (matches `huggingface_hub`'s own conventional env var name)
-- `CARTESIA_API_KEY` (or `DEEPGRAM_API_KEY` for fallback — **no Deepgram adapter built yet**, so this isn't currently usable)
+- `CARTESIA_API_KEY` (or `FISH_AUDIO_API_KEY` for fallback TTS, paired with a `fish_audio_voice_id` in config.yaml)
 - `KITE_API_KEY` / `KITE_API_SECRET` / `KITE_ACCESS_TOKEN` (confirm read-only scope at Kite Connect app registration). `KITE_ACCESS_TOKEN` expires daily — regenerate it with `python scripts/kite_login.py`, which walks through the login flow and writes the fresh token into `.env` for you (requires `KITE_API_KEY`/`KITE_API_SECRET` already set)
 - `TAVILY_API_KEY`
 
@@ -243,8 +243,8 @@ audio:
 
 input_mode: "always_on"  # or "ptt"
 tts:
-  provider: "cartesia"  # or "deepgram" -- deepgram has no adapter yet
-  voice_id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
+  provider: "cartesia"  # or "fish_audio"
+  voice_id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"  # For Cartesia. For Fish Audio, use fish_audio_voice_id instead
 
 stt:
   provider: "groq"  # or "huggingface"
@@ -333,7 +333,7 @@ JSON test cases: input transcript, optional mocked screen result, expected tool 
 - **Leaves device:** audio (to Groq), screenshots (to Groq when `capture_screen` called), TTS text (to Cartesia), search queries (to Tavily, never account-specific)
 - **Confirm vendor data-retention & training policies** before relying beyond personal prototype
 - **Local logging:** Section 13 turn log (SQLite) + screenshots (disk files) behind OS disk encryption
-- **No third-party sharing** beyond: Groq, Cartesia/Deepgram, Kite, Tavily
+- **No third-party sharing** beyond: Groq, Cartesia/Fish Audio, Kite, Tavily
 - **Revisit explicitly if shared with anyone else** (no multi-user auth planned)
 
 ---
