@@ -117,3 +117,21 @@ async def test_render_chart_saves_plain_candlestick_with_no_indicators(tmp_path)
     import os
     assert os.path.exists(path)
     assert path.endswith(".png")
+
+
+@pytest.mark.asyncio
+async def test_render_chart_produces_png_matching_overlay_panel_dimensions(tmp_path):
+    """Regression test: the rendered PNG must be exactly 520x420px so it isn't
+    cropped by the overlay's tk.PhotoImage, which does no scaling (see
+    financial_voice_agent/overlay/screen_overlay.py's _CHART_PANEL_WIDTH/_HEIGHT)."""
+    from PIL import Image
+
+    history_fn = _make_history_fn([float(100 + i) for i in range(30)])
+
+    path = await render_chart(
+        "RELIANCE", ["moving_average", "rsi"], history_fn=history_fn,
+        interval="day", output_dir=str(tmp_path),
+    )
+
+    with Image.open(path) as img:
+        assert img.size == (520, 420)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import os
 import pathlib
 from typing import Awaitable, Callable
 
@@ -146,7 +147,8 @@ TOOLS_SCHEMA = [
             "name": "get_stock_fundamentals",
             "description": (
                 "Get fundamental data (P/E ratio, market cap, 52-week range) for a company "
-                "by name -- also resolves fuzzy/partial company names."
+                "by name -- also resolves fuzzy/partial company names. Also returns the "
+                "resolved NSE ticker symbol."
             ),
             "parameters": {
                 "type": "object",
@@ -203,7 +205,7 @@ async def _dispatch(
             fixtures_dir=_FIXTURES_DIR,
             instrument_cache=instrument_cache,
         )
-        path = await render_chart(**call.arguments, history_fn=history_fn)
+        path = os.path.abspath(await render_chart(**call.arguments, history_fn=history_fn))
         if overlay_sender is not None:
             overlay_sender(f"show_chart:{path}")
         return {"chart_path": path}

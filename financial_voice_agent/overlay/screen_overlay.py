@@ -12,6 +12,7 @@ from __future__ import annotations
 import ctypes
 import queue
 import socket
+import sys
 import threading
 import tkinter as tk
 
@@ -41,7 +42,15 @@ def _make_click_through(root: tk.Tk) -> None:
 
 def _listen(inbox: "queue.Queue[str]", port: int) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("127.0.0.1", port))
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        print(
+            f"screen_overlay: could not bind UDP port {port} (already in use?), "
+            "overlay will not receive messages",
+            file=sys.stderr,
+        )
+        return
     while True:
         data, _addr = sock.recvfrom(2048)
         inbox.put(data.decode("utf-8"))
@@ -135,16 +144,21 @@ def main() -> None:
     def poll() -> None:
         try:
             while True:
-                message = inbox.get_nowait()
-                if message == "processing_on":
-                    canvas.itemconfigure(glow_id, state="normal")
-                elif message == "processing_off":
-                    canvas.itemconfigure(glow_id, state="hidden")
-                elif message.startswith("show_chart:"):
-                    chart_panel.show(message[len("show_chart:") :])
-        except queue.Empty:
-            pass
-        root.after(30, poll)
+                try:
+                    message = inbox.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    if message == "processing_on":
+                        canvas.itemconfigure(glow_id, state="normal")
+                    elif message == "processing_off":
+                        canvas.itemconfigure(glow_id, state="hidden")
+                    elif message.startswith("show_chart:"):
+                        chart_panel.show(message[len("show_chart:") :])
+                except Exception:  # noqa: BLE001 -- one bad message must never kill the poll loop
+                    pass
+        finally:
+            root.after(30, poll)
 
     root.after(30, poll)
     root.mainloop()

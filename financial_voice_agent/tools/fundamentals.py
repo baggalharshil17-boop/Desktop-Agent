@@ -39,4 +39,5 @@ def _summarize_fundamentals(data: dict) -> dict:
         "year_high": details.get("yhigh"),
         "year_low": details.get("ylow"),
         "pe_ratio": details.get("pPerEBasicExcludingExtraordinaryItemsTTM"),
+        "nse_symbol": data.get("companyProfile", {}).get("exchangeCodeNse"),
     }

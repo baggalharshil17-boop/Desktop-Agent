@@ -15,6 +15,7 @@ async def test_get_stock_fundamentals_mock_mode_returns_fixture():
     result = await get_stock_fundamentals("Reliance", http_client=None, mode="mock", fixtures_dir="fixtures")
 
     assert result["company_name"] == "Reliance Industries"
+    assert result["nse_symbol"] == "RELIANCE"
     assert "error" not in result
 
 
@@ -32,6 +33,7 @@ async def test_get_stock_fundamentals_live_mode_summarizes_real_response_shape()
             "ylow": "1250.55",
             "pPerEBasicExcludingExtraordinaryItemsTTM": "23.43",
         },
+        "companyProfile": {"exchangeCodeNse": "RELIANCE"},
     })
 
     result = await get_stock_fundamentals("Reliance", http_client=client, mode="live")
@@ -44,6 +46,7 @@ async def test_get_stock_fundamentals_live_mode_summarizes_real_response_shape()
     assert result["year_high"] == "1611.20"
     assert result["year_low"] == "1250.55"
     assert result["pe_ratio"] == "23.43"
+    assert result["nse_symbol"] == "RELIANCE"
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,11 @@ _VALID_CHART_INDICATORS = {"moving_average", "bollinger", "rsi", "fibonacci"}
 _MOVING_AVERAGE_WINDOW = 20
 _BOLLINGER_WINDOW = 20
 _RSI_WINDOW = 14
+# Matches the overlay panel's _CHART_PANEL_WIDTH/_CHART_PANEL_HEIGHT (520x420px)
+# at mplfinance's default DPI of 100. Must stay in sync with
+# financial_voice_agent/overlay/screen_overlay.py's panel dimensions -- tk.PhotoImage
+# does no scaling, so a mismatch here crops the chart in the overlay panel.
+_CHART_FIGSIZE_INCHES = (5.2, 4.2)
 
 
 class UnknownChartIndicatorError(ValueError):
@@ -127,6 +132,7 @@ async def render_chart(
         volume=False,
         style="charles",
         savefig=path,
+        figsize=_CHART_FIGSIZE_INCHES,
     )
     if addplots:
         plot_kwargs["addplot"] = addplots
