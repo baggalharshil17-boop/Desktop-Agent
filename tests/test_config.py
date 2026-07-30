@@ -659,6 +659,7 @@ def test_load_config_reads_fish_audio_provider_and_model(tmp_path, monkeypatch):
         tts:
           provider: "fish_audio"
           fish_audio_model: "s2.1-pro"
+          fish_audio_voice_id: "test-voice-id"
         stt:
           provider: "groq"
           model: "test-stt-model"
@@ -694,6 +695,7 @@ def test_load_config_fish_audio_model_defaults_to_none_when_absent(tmp_path, mon
         input_mode: "always_on"
         tts:
           provider: "fish_audio"
+          fish_audio_voice_id: "test-voice-id"
         stt:
           provider: "groq"
           model: "test-stt-model"
@@ -710,3 +712,105 @@ def test_load_config_fish_audio_model_defaults_to_none_when_absent(tmp_path, mon
     config = load_config(config_path=yaml_path, env_path=env_path)
 
     assert config.fish_audio_model is None
+
+
+def test_load_config_missing_fish_audio_voice_id_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("FISH_AUDIO_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+        input_mode: "always_on"
+        tts:
+          provider: "fish_audio"
+          fish_audio_model: "s2.1-pro-free"
+        stt:
+          provider: "groq"
+          model: "test-stt-model"
+        llm:
+          provider: "groq"
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(tmp_path, "GROQ_API_KEY=groq-secret\nFISH_AUDIO_API_KEY=fish-secret\n")
+
+    with pytest.raises(ConfigError, match="fish_audio_voice_id"):
+        load_config(config_path=yaml_path, env_path=env_path)
+
+
+def test_load_config_fish_audio_placeholder_voice_id_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("FISH_AUDIO_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+        input_mode: "always_on"
+        tts:
+          provider: "fish_audio"
+          fish_audio_model: "s2.1-pro-free"
+          fish_audio_voice_id: "<pick a voice id>"
+        stt:
+          provider: "groq"
+          model: "test-stt-model"
+        llm:
+          provider: "groq"
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(tmp_path, "GROQ_API_KEY=groq-secret\nFISH_AUDIO_API_KEY=fish-secret\n")
+
+    with pytest.raises(ConfigError, match="fish_audio_voice_id"):
+        load_config(config_path=yaml_path, env_path=env_path)
+
+
+def test_load_config_reads_fish_audio_voice_id(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("FISH_AUDIO_API_KEY", raising=False)
+    yaml_path = _write_yaml(
+        tmp_path,
+        """\
+        vad:
+          speech_threshold: 0.5
+          silence_duration_ms: 600
+          min_speech_duration_ms: 200
+        audio:
+          output_device_index: null
+        input_mode: "always_on"
+        tts:
+          provider: "fish_audio"
+          fish_audio_model: "s2.1-pro-free"
+          fish_audio_voice_id: "real-voice-id-123"
+        stt:
+          provider: "groq"
+          model: "test-stt-model"
+        llm:
+          provider: "groq"
+          model: "test-model"
+        storage:
+          db_path: "./agent_turns.db"
+        mode: "live"
+        """,
+    )
+    env_path = _write_env(tmp_path, "GROQ_API_KEY=groq-secret\nFISH_AUDIO_API_KEY=fish-secret\n")
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.fish_audio_voice_id == "real-voice-id-123"

@@ -99,6 +99,7 @@ def main() -> None:
     new_env: dict[str, str] = {}
     cartesia_voice_id = ""
     fish_audio_model = "s2.1-pro-free"
+    fish_audio_voice_id = ""
 
     stt_provider = _ask_choice("STT provider", ["groq", "huggingface"], default="groq")
     llm_provider = _ask_choice("LLM provider", ["groq", "huggingface"], default="groq")
@@ -144,11 +145,21 @@ def main() -> None:
                 else:
                     cartesia_voice_id = input("  Paste a voice_id: ").strip()
     else:
-        fish_audio_key, _ = _collect_and_validate(
+        fish_audio_key, fish_audio_result = _collect_and_validate(
             "FISH_AUDIO_API_KEY", "Fish Audio API key (fish.audio/app/api-keys)", validate_fish_audio_key
         )
         if fish_audio_key:
             new_env["FISH_AUDIO_API_KEY"] = fish_audio_key
+            voices = (fish_audio_result.data or {}).get("voices", [])
+            if voices:
+                print("\n  Available voices:")
+                for i, (voice_id, title) in enumerate(voices[:15], start=1):
+                    print(f"    {i}. {title} ({voice_id})")
+                choice = input("  Pick a voice number (or press Enter to type an id manually): ").strip()
+                if choice.isdigit() and 1 <= int(choice) <= len(voices[:15]):
+                    fish_audio_voice_id = voices[int(choice) - 1][0]
+                else:
+                    fish_audio_voice_id = input("  Paste a voice_id: ").strip()
 
     tavily_value, _ = _collect_and_validate(
         "TAVILY_API_KEY", "Tavily API key (tavily.com) -- for news search", validate_tavily_key
@@ -171,6 +182,7 @@ def main() -> None:
             tts_provider=tts_provider,
             cartesia_voice_id=cartesia_voice_id or "<pick a voice id from https://play.cartesia.ai/voices>",
             fish_audio_model=fish_audio_model,
+            fish_audio_voice_id=fish_audio_voice_id or "<pick a voice id from https://fish.audio/discovery>",
             mode=mode,
         )
         CONFIG_PATH.write_text(config_text)

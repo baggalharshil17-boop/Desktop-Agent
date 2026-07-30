@@ -2,81 +2,37 @@ vad:
   speech_threshold: 0.5
   silence_duration_ms: 600
   min_speech_duration_ms: 200
-  # Interrupt playback when the user starts talking. Safe to leave on even
-  # with open speakers: audio.echo_suppression below stops the assistant's
-  # own voice from counting as a user interruption.
   barge_in_enabled: true
-  # How much continuous speech is required before interrupting playback.
-  # Guards against brief residual-echo spikes and momentary leaks where a
-  # chunk of real TTS speech reads louder than the calibrated echo gain
-  # predicts (a single scalar gain is a broadband average against a noise
-  # burst -- real speech's spectral content can occasionally exceed it).
-  # Raised from 96 to 200 after a reported false mid-word barge-in; still
-  # short enough not to blunt real interruptions, since genuine barge-in
-  # speech naturally sustains for a full word (150ms+). Raise further if
-  # the agent still cuts itself off; lower for snappier barge-in.
   barge_in_min_speech_ms: 200
 
 audio:
-  # null = follow whatever Windows currently has set as default (via the WASAPI host
-  # API, which is what Windows Sound Settings actually controls -- not PyAudio's own
-  # "default", which resolves through a different, less reliable host API and can go
-  # stale when you change devices). Set an explicit integer index only to override.
   output_device_index: null
   input_device_index: null
-
-  # Lets barge-in work on open speakers, not just headphones. The startup
-  # calibration measures how much of the speaker's output actually reaches
-  # this mic, then ignores mic audio quiet enough to be explained by that
-  # echo -- so the assistant can't interrupt itself or transcribe its own
-  # voice. On headphones it measures near-zero echo and effectively
-  # disables itself, so there's no reason to turn it off.
   echo_suppression: true
-  # How much louder than the predicted echo the mic must be to count as a
-  # real person. Raise if the assistant still interrupts itself; lower if
-  # barge-in needs you to talk too loudly.
-  #
-  # 1.75 chosen from measured levels on this machine (headset mic + laptop
-  # speakers): speech sits at ~0.0141 RMS and the loudest echo at ~0.0068,
-  # so this lands the threshold near ~0.0094 -- roughly 40% above the echo
-  # and 33% below normal speech, rather than crowding either end.
   echo_margin: 1.75
-  # Fixed echo gain -- skips the audible calibration noise burst at startup
-  # entirely. Set from earlier live calibration on this machine (headset
-  # mic + laptop speakers, gain measured 0.018-0.023 across 4 runs); using
-  # a fixed number trades a little accuracy (won't re-adapt if you change
-  # devices/volume) for a silent startup. Remove this key (or set to null)
-  # to go back to auto-calibrating on every run instead.
-  echo_gain: 0.025
 
 input_mode: "always_on"  # or "ptt"
 tts:
-  provider: "cartesia"  # or "fish_audio"
-  voice_id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
-  # Only used when provider is "fish_audio". "s2.1-pro-free" works with
-  # zero Fish Audio API credit balance; other models ("s2.1-pro", "s2-pro",
-  # "s1") require a funded account.
-  # fish_audio_model: "s2.1-pro-free"
+  provider: "fish_audio"  # or "cartesia"/"fish_audio"
+  # voice_id is only used when provider is "cartesia".
+  # fish_audio_voice_id is REQUIRED when provider is "fish_audio" -- Fish
+  # Audio does not use a consistent default voice when it's omitted (a
+  # different voice gets used per call). Pick one via `python scripts/setup.py`
+  # or from https://fish.audio/discovery.
+  fish_audio_voice_id: "933563129e564b19a115bedd57b7406a"
 
 stt:
-  provider: "groq"  # or "huggingface" -- HF Inference credits ran out (402), switched back
+  provider: "groq"  # or "groq"/"huggingface"
   model: "whisper-large-v3-turbo"
 
 llm:
-  provider: "groq"  # or "huggingface"
-  # qwen/qwen3.6-27b supports both tool calling and vision (capture_screen's
-  # image attachment needs the latter) -- check console.groq.com/docs/models
-  # and console.groq.com/docs/vision before changing, model catalog churns.
+  provider: "groq"  # or "groq"/"huggingface"
+  # Must support both tool calling and vision (capture_screen needs the
+  # latter) -- check console.groq.com/docs/models and
+  # console.groq.com/docs/vision before changing.
   model: "qwen/qwen3.6-27b"
 
 storage:
   db_path: "./agent_turns.db"
 
-mode: "live"  # or "mock"
-
-overlay:
-  # Shows a glow around the screen edges while the agent is silently
-  # working (speech-to-text, LLM, and TTS generation) so there's visual
-  # feedback during that gap. Set to false to disable the overlay process
-  # entirely.
-  enabled: true
+mode: "mock"  # or "live"/"mock"

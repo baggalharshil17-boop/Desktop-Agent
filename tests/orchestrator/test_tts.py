@@ -94,7 +94,7 @@ async def test_fish_audio_client_sends_model_header_and_pcm_format():
     http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url="https://api.fish.audio"
     )
-    client = RealFishAudioTtsClient(http_client, model="s2.1-pro-free")
+    client = RealFishAudioTtsClient(http_client, model="s2.1-pro-free", reference_id="test-voice-id")
 
     result = await client.synthesize("Hello there")
 
@@ -104,7 +104,13 @@ async def test_fish_audio_client_sends_model_header_and_pcm_format():
     assert request.headers["model"] == "s2.1-pro-free"
     import json
     body = json.loads(request.content)
-    assert body == {"text": "Hello there", "format": "pcm", "sample_rate": 16000}
+    assert body == {
+        "text": "Hello there",
+        "format": "pcm",
+        "sample_rate": 16000,
+        "reference_id": "test-voice-id",
+    }
+    assert body["reference_id"] == "test-voice-id"
 
 
 @pytest.mark.asyncio
@@ -118,7 +124,7 @@ async def test_fish_audio_client_defaults_to_free_model():
     http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url="https://api.fish.audio"
     )
-    client = RealFishAudioTtsClient(http_client)
+    client = RealFishAudioTtsClient(http_client, reference_id="test-voice-id")
 
     await client.synthesize("test")
 
@@ -133,7 +139,7 @@ async def test_fish_audio_client_raises_on_http_error():
     http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url="https://api.fish.audio"
     )
-    client = RealFishAudioTtsClient(http_client)
+    client = RealFishAudioTtsClient(http_client, reference_id="test-voice-id")
 
     with pytest.raises(httpx.HTTPStatusError):
         await client.synthesize("test")
@@ -143,6 +149,7 @@ def test_make_tts_client_returns_fish_audio_client_for_fish_audio_provider():
     class _FakeConfig:
         tts_provider = "fish_audio"
         fish_audio_model = "s2.1-pro"
+        fish_audio_voice_id = "some-id"
 
     class _FakeHttpClients:
         tts = httpx.AsyncClient(base_url="https://api.fish.audio")
@@ -151,12 +158,14 @@ def test_make_tts_client_returns_fish_audio_client_for_fish_audio_provider():
 
     assert isinstance(client, RealFishAudioTtsClient)
     assert client._model == "s2.1-pro"
+    assert client._reference_id == "some-id"
 
 
 def test_make_tts_client_uses_default_model_when_config_model_is_none():
     class _FakeConfig:
         tts_provider = "fish_audio"
         fish_audio_model = None
+        fish_audio_voice_id = "some-id"
 
     class _FakeHttpClients:
         tts = httpx.AsyncClient(base_url="https://api.fish.audio")
@@ -164,12 +173,14 @@ def test_make_tts_client_uses_default_model_when_config_model_is_none():
     client = make_tts_client(_FakeConfig(), _FakeHttpClients())
 
     assert client._model == FISH_AUDIO_DEFAULT_MODEL
+    assert client._reference_id == "some-id"
 
 
 def test_make_tts_client_raises_for_unsupported_provider():
     class _FakeConfig:
         tts_provider = "elevenlabs"
         fish_audio_model = None
+        fish_audio_voice_id = None
 
     class _FakeHttpClients:
         tts = None

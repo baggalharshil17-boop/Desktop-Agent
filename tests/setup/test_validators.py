@@ -140,7 +140,9 @@ async def test_validate_tavily_key_reports_failure_on_401():
 
 def test_validate_fish_audio_key_ok_on_200_response():
     def handler(request):
-        return httpx.Response(200, content=b"audio-bytes")
+        return httpx.Response(
+            200, json={"items": [{"_id": "voice-1", "title": "Test Voice"}], "total": 1}
+        )
 
     transport = httpx.MockTransport(handler)
     client = httpx.Client(base_url="https://api.fish.audio", transport=transport)
@@ -148,6 +150,7 @@ def test_validate_fish_audio_key_ok_on_200_response():
     result = validate_fish_audio_key("test-key", http_client=client)
 
     assert result.ok is True
+    assert result.data["voices"] == [("voice-1", "Test Voice")]
 
 
 def test_validate_fish_audio_key_reports_failure_on_402():

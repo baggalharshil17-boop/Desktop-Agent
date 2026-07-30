@@ -39,6 +39,7 @@ class Config:
     tts_provider: str
     cartesia_voice_id: str | None
     fish_audio_model: str | None
+    fish_audio_voice_id: str | None
     stt_provider: str
     stt_model: str
     llm_provider: str
@@ -111,6 +112,15 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
 
         fish_audio_model = raw.get("tts", {}).get("fish_audio_model")
 
+        fish_audio_voice_id = raw.get("tts", {}).get("fish_audio_voice_id")
+        if tts_provider == "fish_audio" and (
+            not fish_audio_voice_id or _PLACEHOLDER_RE.match(fish_audio_voice_id)
+        ):
+            raise ConfigError(
+                "tts.provider is 'fish_audio' but tts.fish_audio_voice_id in config.yaml is not set "
+                "(still a placeholder) — pick a voice id from Fish Audio's voice library"
+            )
+
         stt_provider = raw["stt"]["provider"]
         if stt_provider not in _VALID_STT_PROVIDERS:
             raise ConfigError(
@@ -150,6 +160,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             tts_provider=tts_provider,
             cartesia_voice_id=cartesia_voice_id,
             fish_audio_model=fish_audio_model,
+            fish_audio_voice_id=fish_audio_voice_id,
             stt_provider=stt_provider,
             stt_model=stt_model,
             llm_provider=llm_provider,

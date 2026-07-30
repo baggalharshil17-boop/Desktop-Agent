@@ -48,12 +48,16 @@ def render_config_yaml(
     tts_provider: str,
     cartesia_voice_id: str = "",
     fish_audio_model: str = FISH_AUDIO_DEFAULT_MODEL,
+    fish_audio_voice_id: str = "",
     mode: str,
 ) -> str:
     if tts_provider == "cartesia":
         tts_provider_field = f'  voice_id: "{cartesia_voice_id}"'
     else:
-        tts_provider_field = f'  fish_audio_model: "{fish_audio_model}"'
+        tts_provider_field = (
+            f'  fish_audio_model: "{fish_audio_model}"\n'
+            f'  fish_audio_voice_id: "{fish_audio_voice_id}"'
+        )
     return _TEMPLATE.format(
         stt_provider=stt_provider,
         stt_model=stt_model,

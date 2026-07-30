@@ -88,17 +88,28 @@ class RealFishAudioTtsClient:
     PCM bytes with no container/header, matching CARTESIA_OUTPUT_FORMAT's
     shape (16kHz, pcm_s16le) so nothing downstream needs resampling --
     format="wav" was also tested and does NOT match (adds a RIFF header).
+
+    reference_id is required -- confirmed empirically (not documented by
+    Fish Audio) that omitting it makes Fish Audio pick an inconsistent
+    voice per call, producing a different voice (even a different gender)
+    between consecutive TTS calls in the same session.
     """
 
-    def __init__(self, http_client, *, model: str = FISH_AUDIO_DEFAULT_MODEL) -> None:
+    def __init__(self, http_client, *, model: str = FISH_AUDIO_DEFAULT_MODEL, reference_id: str) -> None:
         self._client = http_client
         self._model = model
+        self._reference_id = reference_id
 
     async def synthesize(self, text: str) -> bytes:
         response = await self._client.post(
             "/v1/tts",
             headers={"model": self._model},
-            json={"text": text, "format": "pcm", "sample_rate": 16000},
+            json={
+                "text": text,
+                "format": "pcm",
+                "sample_rate": 16000,
+                "reference_id": self._reference_id,
+            },
         )
         response.raise_for_status()
         return response.content
@@ -110,7 +121,9 @@ def make_tts_client(config, http_clients) -> TtsClient:
     Audio without touching any calling code."""
     if config.tts_provider == "fish_audio":
         return RealFishAudioTtsClient(
-            http_clients.tts, model=config.fish_audio_model or FISH_AUDIO_DEFAULT_MODEL
+            http_clients.tts,
+            model=config.fish_audio_model or FISH_AUDIO_DEFAULT_MODEL,
+            reference_id=config.fish_audio_voice_id,
         )
     if config.tts_provider == "cartesia":
         from cartesia import AsyncCartesia

@@ -82,6 +82,7 @@ def test_render_config_yaml_renders_fish_audio_model_when_provider_is_fish_audio
         llm_model="qwen/qwen3.6-27b",
         tts_provider="fish_audio",
         fish_audio_model="s2.1-pro-free",
+        fish_audio_voice_id="some-real-id",
         mode="mock",
     )
 
@@ -89,4 +90,5 @@ def test_render_config_yaml_renders_fish_audio_model_when_provider_is_fish_audio
 
     assert parsed["tts"]["provider"] == "fish_audio"
     assert parsed["tts"]["fish_audio_model"] == "s2.1-pro-free"
+    assert parsed["tts"]["fish_audio_voice_id"] == "some-real-id"
     assert "voice_id" not in parsed["tts"]

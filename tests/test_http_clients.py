@@ -25,6 +25,7 @@ def _make_config(
         tts_provider=tts_provider,
         cartesia_voice_id="test-voice-id",
         fish_audio_model=None,
+        fish_audio_voice_id="test-fish-voice-id",
         stt_provider="huggingface",
         stt_model="openai/whisper-large-v3",
         llm_provider="huggingface",
