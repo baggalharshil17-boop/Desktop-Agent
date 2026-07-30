@@ -583,3 +583,29 @@ def test_load_config_reads_fixed_echo_gain(tmp_path, monkeypatch):
     config = load_config(config_path=yaml_path, env_path=env_path)
 
     assert config.echo_gain == 0.025
+
+
+def test_processing_overlay_enabled_defaults_to_true_when_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    yaml_path = _write_yaml(tmp_path, VALID_YAML)  # no overlay: section
+    env_path = _write_env(
+        tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n"
+    )
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.processing_overlay_enabled is True
+
+
+def test_processing_overlay_enabled_reads_explicit_false(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    yaml_path = _write_yaml(tmp_path, VALID_YAML + "\n    overlay:\n      enabled: false\n")
+    env_path = _write_env(
+        tmp_path, "GROQ_API_KEY=groq-secret\nCARTESIA_API_KEY=cartesia-secret\n"
+    )
+
+    config = load_config(config_path=yaml_path, env_path=env_path)
+
+    assert config.processing_overlay_enabled is False

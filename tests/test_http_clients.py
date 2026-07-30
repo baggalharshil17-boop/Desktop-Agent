@@ -30,6 +30,7 @@ def _make_config(
         llm_model="test-model",
         storage_db_path="./agent_turns.db",
         mode="live",
+        processing_overlay_enabled=True,
         groq_api_key="groq-secret",
         cartesia_api_key="cartesia-secret",
         deepgram_api_key="deepgram-secret",

@@ -506,3 +506,54 @@ async def test_run_voice_loop_reraises_drive_pipeline_crash(tmp_path):
         await run_voice_loop(
             pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
         )
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_calls_on_processing_start_and_end_around_each_turn(tmp_path):
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    pipeline = _FakePipeline([b"utterance-1"])
+    playback = _FakePlayback()
+    events: list[str] = []
+
+    async def stt_fn(wav):
+        return "hello"
+
+    async def llm_fn(transcript, history):
+        events.append("during_turn")
+        return LlmTurnResult(response_text="hi there", tool_calls_json=None, tool_results_json=None)
+
+    async def tts_fn(text):
+        return b"audio-bytes"
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path,
+        on_processing_start=lambda: events.append("start"),
+        on_processing_end=lambda: events.append("end"),
+    )
+
+    assert events == ["start", "during_turn", "end"]
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_works_without_processing_callbacks(tmp_path):
+    # Both callbacks default to None -- must not raise when omitted.
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    pipeline = _FakePipeline([b"utterance-1"])
+    playback = _FakePlayback()
+
+    async def stt_fn(wav):
+        return "hello"
+
+    async def llm_fn(transcript, history):
+        return LlmTurnResult(response_text="hi there", tool_calls_json=None, tool_results_json=None)
+
+    async def tts_fn(text):
+        return b"audio-bytes"
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+    )
+
+    assert playback.play_calls == [b"audio-bytes"]

@@ -44,6 +44,7 @@ class Config:
     llm_model: str
     storage_db_path: str
     mode: str
+    processing_overlay_enabled: bool
     groq_api_key: str | None
     cartesia_api_key: str | None
     deepgram_api_key: str | None
@@ -149,6 +150,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             llm_model=llm_model,
             storage_db_path=raw["storage"]["db_path"],
             mode=raw["mode"],
+            processing_overlay_enabled=raw.get("overlay", {}).get("enabled", True),
             groq_api_key=groq_api_key,
             cartesia_api_key=cartesia_api_key,
             deepgram_api_key=deepgram_api_key,

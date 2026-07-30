@@ -208,6 +208,8 @@ async def run_voice_loop(
     choice_fn: Callable[[list[str]], str] = random.choice,
     recent_fallback_window: int = 5,
     barge_in_enabled: bool = True,
+    on_processing_start: Callable[[], None] | None = None,
+    on_processing_end: Callable[[], None] | None = None,
 ) -> None:
     output_queue: asyncio.Queue = asyncio.Queue()
     drive_task = asyncio.create_task(drive_pipeline(pipeline, output_queue))
@@ -225,9 +227,15 @@ async def run_voice_loop(
                         raise exc
                 continue
 
-            result = await run_turn(
-                utterance_wav, history, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
-            )
+            if on_processing_start is not None:
+                on_processing_start()
+            try:
+                result = await run_turn(
+                    utterance_wav, history, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+                )
+            finally:
+                if on_processing_end is not None:
+                    on_processing_end()
 
             if result.transcript is not None and result.response_text is not None:
                 history = update_history(

@@ -69,3 +69,10 @@ storage:
   db_path: "./agent_turns.db"
 
 mode: "live"  # or "mock"
+
+overlay:
+  # Shows a glow around the screen edges while the agent is silently
+  # working (speech-to-text, LLM, and TTS generation) so there's visual
+  # feedback during that gap. Set to false to disable the overlay process
+  # entirely.
+  enabled: true

@@ -21,6 +21,8 @@ account (read-only) using today's KITE_ACCESS_TOKEN (see scripts/kite_login.py
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 
 import janus
 import pyaudio
@@ -44,6 +46,7 @@ from financial_voice_agent.orchestrator.playback import AudioPlayback
 from financial_voice_agent.orchestrator.stt import make_stt_client, transcribe_with_retry
 from financial_voice_agent.orchestrator.system_prompt import SYSTEM_PROMPT
 from financial_voice_agent.orchestrator.tts import RealCartesiaTtsClient, synthesize_with_fallback
+from financial_voice_agent.overlay.signal_client import make_overlay_sender
 from financial_voice_agent.tools.registry import TOOLS_SCHEMA, make_tool_executor
 
 
@@ -81,6 +84,15 @@ async def main() -> None:
 
     stt_client = make_stt_client(config)
     llm_client = make_llm_client(config)
+
+    overlay_process = None
+    overlay_sender = None
+    if config.processing_overlay_enabled:
+        overlay_process = subprocess.Popen(
+            [sys.executable, "-m", "financial_voice_agent.overlay.screen_overlay"]
+        )
+        overlay_sender = make_overlay_sender()
+
     tool_executor = make_tool_executor(config, http_clients)
     tts_client = RealCartesiaTtsClient(
         AsyncCartesia(api_key=config.cartesia_api_key), voice_id=config.cartesia_voice_id
@@ -172,6 +184,8 @@ async def main() -> None:
             tts_fn=tts_fn,
             db_path=config.storage_db_path,
             barge_in_enabled=config.barge_in_enabled,
+            on_processing_start=(lambda: overlay_sender("processing_on")) if overlay_sender else None,
+            on_processing_end=(lambda: overlay_sender("processing_off")) if overlay_sender else None,
         )
     except asyncio.CancelledError:
         pass
@@ -179,6 +193,8 @@ async def main() -> None:
         capture.stop()
         playback.close()
         await close_http_clients(http_clients)
+        if overlay_process is not None:
+            overlay_process.terminate()
 
 
 if __name__ == "__main__":
