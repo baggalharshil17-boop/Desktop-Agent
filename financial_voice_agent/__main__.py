@@ -21,6 +21,7 @@ account (read-only) using today's KITE_ACCESS_TOKEN (see scripts/kite_login.py
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 
@@ -45,7 +46,11 @@ from financial_voice_agent.orchestrator.playback import AudioPlayback
 from financial_voice_agent.orchestrator.stt import make_stt_client, transcribe_with_retry
 from financial_voice_agent.orchestrator.system_prompt import SYSTEM_PROMPT
 from financial_voice_agent.orchestrator.tts import make_tts_client, synthesize_with_fallback
-from financial_voice_agent.overlay.signal_client import make_overlay_sender
+from financial_voice_agent.overlay.signal_client import (
+    OVERLAY_TOKEN_ENV_VAR,
+    generate_overlay_token,
+    make_overlay_sender,
+)
 from financial_voice_agent.tools.registry import TOOLS_SCHEMA, make_tool_executor
 
 
@@ -81,10 +86,15 @@ async def main() -> None:
     overlay_process = None
     overlay_sender = None
     if config.processing_overlay_enabled:
+        # Shared secret so the overlay ignores datagrams from any other local
+        # process -- the port itself is a fixed, source-published constant.
+        overlay_token = generate_overlay_token()
+        overlay_env = {**os.environ, OVERLAY_TOKEN_ENV_VAR: overlay_token}
         overlay_process = subprocess.Popen(
-            [sys.executable, "-m", "financial_voice_agent.overlay.screen_overlay"]
+            [sys.executable, "-m", "financial_voice_agent.overlay.screen_overlay"],
+            env=overlay_env,
         )
-        overlay_sender = make_overlay_sender()
+        overlay_sender = make_overlay_sender(token=overlay_token)
 
     tool_executor = make_tool_executor(config, http_clients, overlay_sender=overlay_sender)
     tts_client = make_tts_client(config, http_clients)

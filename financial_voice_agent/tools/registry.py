@@ -6,7 +6,11 @@ import pathlib
 from typing import Awaitable, Callable
 
 from financial_voice_agent.orchestrator.llm import ToolCall
-from financial_voice_agent.tools.charting import UnknownChartIndicatorError, render_chart
+from financial_voice_agent.tools.charting import (
+    ChartPathError,
+    UnknownChartIndicatorError,
+    render_chart,
+)
 from financial_voice_agent.tools.fundamentals import get_stock_fundamentals
 from financial_voice_agent.tools.history import get_ohlc_history
 from financial_voice_agent.tools.indicators import InsufficientDataError, compute_indicator
@@ -162,16 +166,37 @@ TOOLS_SCHEMA = [
 ]
 
 
+# Every parameter each tool actually declares to the model, derived from
+# TOOLS_SCHEMA itself so the two can't drift. TOOLS_SCHEMA is only advisory
+# metadata *sent to* the model -- nothing makes the model's reply conform to
+# it, so the argument dict coming back is untrusted input and must be
+# filtered before it reaches a **splat. Without this, any keyword-only
+# parameter a tool function happens to expose (e.g. render_chart's
+# output_dir) is silently model-settable, which turns a chart request into
+# an arbitrary-location file write.
+_SCHEMA_PROPERTIES = {
+    tool["function"]["name"]: set(tool["function"]["parameters"].get("properties", {}))
+    for tool in TOOLS_SCHEMA
+}
+
+
+def filter_tool_arguments(tool_name: str, arguments: dict) -> dict:
+    """Drops any argument the tool's schema doesn't declare."""
+    allowed = _SCHEMA_PROPERTIES.get(tool_name, set())
+    return {key: value for key, value in arguments.items() if key in allowed}
+
+
 async def _dispatch(
     call: ToolCall, config, http_clients, instrument_cache: dict, overlay_sender: Callable[[str], None] | None
 ) -> dict:
+    args = filter_tool_arguments(call.name, call.arguments)
     if call.name == "get_quote":
         return await get_quote(
-            **call.arguments, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
+            **args, http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
         )
     if call.name == "get_ohlc_history":
         return await get_ohlc_history(
-            **call.arguments,
+            **args,
             http_client=http_clients.kite,
             mode=config.mode,
             fixtures_dir=_FIXTURES_DIR,
@@ -185,14 +210,14 @@ async def _dispatch(
             fixtures_dir=_FIXTURES_DIR,
             instrument_cache=instrument_cache,
         )
-        return await compute_indicator(**call.arguments, history_fn=history_fn)
+        return await compute_indicator(**args, history_fn=history_fn)
     if call.name == "get_positions_holdings":
         return await get_positions_holdings(
             http_client=http_clients.kite, mode=config.mode, fixtures_dir=_FIXTURES_DIR
         )
     if call.name == "get_news":
         return await get_news(
-            **call.arguments, http_client=http_clients.tavily, api_key=config.tavily_api_key,
+            **args, http_client=http_clients.tavily, api_key=config.tavily_api_key,
             mode=config.mode, fixtures_dir=_FIXTURES_DIR,
         )
     if call.name == "capture_screen":
@@ -205,13 +230,13 @@ async def _dispatch(
             fixtures_dir=_FIXTURES_DIR,
             instrument_cache=instrument_cache,
         )
-        path = os.path.abspath(await render_chart(**call.arguments, history_fn=history_fn))
+        path = os.path.abspath(await render_chart(**args, history_fn=history_fn))
         if overlay_sender is not None:
             overlay_sender(f"show_chart:{path}")
         return {"chart_path": path}
     if call.name == "get_stock_fundamentals":
         return await get_stock_fundamentals(
-            **call.arguments, http_client=http_clients.indian_stock, mode=config.mode,
+            **args, http_client=http_clients.indian_stock, mode=config.mode,
             fixtures_dir=_FIXTURES_DIR,
         )
     raise UnknownToolError(f"Unknown tool: {call.name}")
@@ -242,6 +267,8 @@ def make_tool_executor(
         except WindowNotFoundError:
             return {"error": "Could not find an active window to capture"}
         except UnknownChartIndicatorError as exc:
+            return {"error": str(exc)}
+        except ChartPathError as exc:
             return {"error": str(exc)}
         except TypeError as exc:
             return {"error": f"Invalid arguments for tool '{call.name}': {exc}"}

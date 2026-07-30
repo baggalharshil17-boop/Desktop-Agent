@@ -1,7 +1,13 @@
+import os
+
 import pytest
 
 from financial_voice_agent.orchestrator.llm import ToolCall
-from financial_voice_agent.tools.registry import TOOLS_SCHEMA, make_tool_executor
+from financial_voice_agent.tools.registry import (
+    TOOLS_SCHEMA,
+    filter_tool_arguments,
+    make_tool_executor,
+)
 
 
 class _FakeConfig:
@@ -101,15 +107,18 @@ async def test_executor_translates_insufficient_data_error_to_error_dict():
 
 
 @pytest.mark.asyncio
-async def test_executor_translates_bad_arguments_to_error_dict():
+async def test_executor_drops_undeclared_arguments_instead_of_crashing():
     executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
 
-    # An extra/unexpected keyword argument from the LLM must not crash the tool loop.
+    # An extra/unexpected keyword argument from the LLM must not crash the tool
+    # loop. It is now dropped by the schema filter before dispatch (it used to
+    # reach the tool function and raise TypeError), so the call still succeeds.
     result = await executor(
         ToolCall(id="1", name="get_quote", arguments={"symbol": "NIFTY 50", "unexpected_arg": "oops"})
     )
 
-    assert "error" in result
+    assert "error" not in result
+    assert result["symbol"] == "NIFTY 50"
 
 
 @pytest.mark.asyncio
@@ -214,3 +223,57 @@ async def test_executor_dispatches_get_stock_fundamentals_in_mock_mode():
 
     assert result["company_name"] == "Reliance Industries"
     assert "error" not in result
+
+
+def test_filter_tool_arguments_keeps_only_schema_declared_keys():
+    assert filter_tool_arguments("show_chart", {"symbol": "RELIANCE"}) == {"symbol": "RELIANCE"}
+    # output_dir/interval are real render_chart parameters but are NOT declared
+    # in show_chart's schema, so the model must not be able to set them.
+    assert filter_tool_arguments(
+        "show_chart", {"symbol": "RELIANCE", "output_dir": "C:/evil", "interval": "day"}
+    ) == {"symbol": "RELIANCE"}
+    assert filter_tool_arguments("get_positions_holdings", {"anything": 1}) == {}
+    assert filter_tool_arguments("unknown_tool", {"symbol": "X"}) == {}
+
+
+@pytest.mark.asyncio
+async def test_executor_ignores_model_supplied_output_dir(tmp_path, monkeypatch):
+    # Regression test for the confirmed arbitrary-file-write: a model-supplied
+    # output_dir used to be splatted straight into render_chart, letting
+    # prompt-injected content choose where on disk the PNG landed.
+    monkeypatch.chdir(tmp_path)
+    escape_target = tmp_path / "escaped"
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(
+        ToolCall(
+            id="1",
+            name="show_chart",
+            arguments={"symbol": "RELIANCE", "output_dir": str(escape_target)},
+        )
+    )
+
+    assert "error" not in result
+    assert not escape_target.exists()
+    assert (tmp_path / "charts").is_dir()
+    assert os.path.realpath(result["chart_path"]).startswith(
+        os.path.realpath(str(tmp_path / "charts"))
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_show_chart_symbol_cannot_escape_the_charts_directory(tmp_path, monkeypatch):
+    # Regression test for the confirmed Windows path traversal: "\" was not
+    # sanitized, so a leading-backslash symbol climbed out of charts/.
+    monkeypatch.chdir(tmp_path)
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(
+        ToolCall(id="1", name="show_chart", arguments={"symbol": "\\..\\..\\..\\evil"})
+    )
+
+    assert "error" not in result
+    charts_dir = os.path.realpath(str(tmp_path / "charts"))
+    assert os.path.realpath(result["chart_path"]).startswith(charts_dir)
+    assert not list(tmp_path.glob("*.png"))
+    assert not list(tmp_path.parent.glob("evil*.png"))

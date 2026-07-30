@@ -10,13 +10,25 @@ message protocol this listens for). Run directly for manual testing:
 from __future__ import annotations
 
 import ctypes
+import os
 import queue
 import socket
 import sys
 import threading
 import tkinter as tk
 
-from financial_voice_agent.overlay.signal_client import DEFAULT_OVERLAY_PORT
+from financial_voice_agent.overlay.signal_client import (
+    DEFAULT_OVERLAY_PORT,
+    OVERLAY_TOKEN_ENV_VAR,
+    decode_message,
+    read_overlay_token,
+)
+
+# Matches financial_voice_agent.tools.charting.render_chart's default
+# output_dir, which is likewise cwd-relative. The overlay is launched as a
+# subprocess of the agent and so inherits the agent's cwd, keeping the two
+# resolving to the same directory.
+_CHARTS_DIR = "charts"
 
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
@@ -40,7 +52,21 @@ def _make_click_through(root: tk.Tk) -> None:
     ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED | WS_EX_TRANSPARENT)
 
 
-def _listen(inbox: "queue.Queue[str]", port: int) -> None:
+def is_allowed_chart_path(image_path: str, charts_dir: str = _CHARTS_DIR) -> bool:
+    """Only render PNGs the agent itself wrote into its own charts/ directory.
+    The sender's path is never trusted on its own -- an authenticated sender
+    still shouldn't be able to point the panel at arbitrary files on disk."""
+    try:
+        resolved = os.path.realpath(image_path)
+        resolved_dir = os.path.realpath(charts_dir)
+        if os.path.commonpath([resolved, resolved_dir]) != resolved_dir:
+            return False
+    except (OSError, ValueError):
+        return False
+    return resolved.lower().endswith(".png") and os.path.isfile(resolved)
+
+
+def _listen(inbox: "queue.Queue[str]", port: int, token: str | None) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("127.0.0.1", port))
@@ -51,9 +77,22 @@ def _listen(inbox: "queue.Queue[str]", port: int) -> None:
             file=sys.stderr,
         )
         return
+    if not token:
+        print(
+            f"screen_overlay: no {OVERLAY_TOKEN_ENV_VAR} set, refusing to process datagrams "
+            "(start the overlay via the agent, not directly)",
+            file=sys.stderr,
+        )
     while True:
         data, _addr = sock.recvfrom(2048)
-        inbox.put(data.decode("utf-8"))
+        try:
+            datagram = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        message = decode_message(token, datagram)
+        if message is None:
+            continue  # unauthenticated or malformed -- not from our agent
+        inbox.put(message)
 
 
 class ChartPanel:
@@ -139,7 +178,10 @@ def main() -> None:
     chart_panel = ChartPanel(root)
 
     inbox: "queue.Queue[str]" = queue.Queue()
-    threading.Thread(target=_listen, args=(inbox, DEFAULT_OVERLAY_PORT), daemon=True).start()
+    token = read_overlay_token()
+    threading.Thread(
+        target=_listen, args=(inbox, DEFAULT_OVERLAY_PORT, token), daemon=True
+    ).start()
 
     def poll() -> None:
         try:
@@ -154,7 +196,9 @@ def main() -> None:
                     elif message == "processing_off":
                         canvas.itemconfigure(glow_id, state="hidden")
                     elif message.startswith("show_chart:"):
-                        chart_panel.show(message[len("show_chart:") :])
+                        image_path = message[len("show_chart:") :]
+                        if is_allowed_chart_path(image_path):
+                            chart_panel.show(image_path)
                 except Exception:  # noqa: BLE001 -- one bad message must never kill the poll loop
                     pass
         finally:

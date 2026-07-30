@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
@@ -40,6 +41,30 @@ _CHART_FIGSIZE_INCHES = (5.2, 4.2)
 
 class UnknownChartIndicatorError(ValueError):
     pass
+
+
+class ChartPathError(ValueError):
+    pass
+
+
+# Whitelist, not blacklist. `symbol` reaches here from the LLM, which in turn
+# reads untrusted third-party content (news results, screenshots), so it must
+# be treated as attacker-influenced. A blacklist that only replaced "/" left
+# Windows' "\" separator live: a symbol like "\..\..\evil" escaped output_dir
+# entirely once os.path.join normalized it.
+_UNSAFE_SYMBOL_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _chart_output_path(symbol: str, output_dir: str) -> str:
+    safe_symbol = _UNSAFE_SYMBOL_CHARS_RE.sub("_", symbol)[:32]
+    path = os.path.join(output_dir, f"chart_{safe_symbol}_{int(time.time() * 1000)}.png")
+    # Belt-and-braces: even with the whitelist above, assert the resolved file
+    # really lands inside output_dir before anything writes to it.
+    resolved_dir = os.path.realpath(output_dir)
+    resolved_path = os.path.realpath(path)
+    if os.path.commonpath([resolved_path, resolved_dir]) != resolved_dir:
+        raise ChartPathError(f"refusing to write chart outside {output_dir!r}")
+    return path
 
 
 def _default_chart_range(interval: str) -> tuple[str, str]:
@@ -124,8 +149,7 @@ async def render_chart(
         hlines = dict(hlines=levels, colors=["#999999"] * len(levels), linestyle="--")
 
     os.makedirs(output_dir, exist_ok=True)
-    safe_symbol = symbol.replace(" ", "_").replace("/", "_")
-    path = os.path.join(output_dir, f"chart_{safe_symbol}_{int(time.time() * 1000)}.png")
+    path = _chart_output_path(symbol, output_dir)
 
     plot_kwargs = dict(
         type="candle",
