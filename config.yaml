@@ -61,7 +61,7 @@ tts:
   # Audio does not use a consistent default voice when it's omitted (a
   # different voice gets used per call). Pick one via `python scripts/setup.py`
   # or from https://fish.audio/discovery.
-  # fish_audio_voice_id: "<pick a voice id>"
+  # fish_audio_voice_id: "933563129e564b19a115bedd57b7406a"
 
 stt:
   provider: "groq"  # or "huggingface" -- HF Inference credits ran out (402), switched back
