@@ -26,7 +26,6 @@ import sys
 
 import janus
 import pyaudio
-from cartesia import AsyncCartesia
 
 from financial_voice_agent.audio.capture import AudioCapture
 from financial_voice_agent.audio.devices import resolve_input_device_index, resolve_output_device_index
@@ -45,19 +44,13 @@ from financial_voice_agent.orchestrator.main_loop import play_with_barge_in, run
 from financial_voice_agent.orchestrator.playback import AudioPlayback
 from financial_voice_agent.orchestrator.stt import make_stt_client, transcribe_with_retry
 from financial_voice_agent.orchestrator.system_prompt import SYSTEM_PROMPT
-from financial_voice_agent.orchestrator.tts import RealCartesiaTtsClient, synthesize_with_fallback
+from financial_voice_agent.orchestrator.tts import make_tts_client, synthesize_with_fallback
 from financial_voice_agent.overlay.signal_client import make_overlay_sender
 from financial_voice_agent.tools.registry import TOOLS_SCHEMA, make_tool_executor
 
 
 async def main() -> None:
     config = load_config()
-    if config.tts_provider != "cartesia":
-        raise NotImplementedError(
-            f"Only tts.provider: 'cartesia' is wired up in the live loop right now, "
-            f"got {config.tts_provider!r} -- no Deepgram TTS adapter exists yet"
-        )
-
     init_db(config.storage_db_path)
     http_clients = await create_http_clients(config)
 
@@ -94,9 +87,7 @@ async def main() -> None:
         overlay_sender = make_overlay_sender()
 
     tool_executor = make_tool_executor(config, http_clients, overlay_sender=overlay_sender)
-    tts_client = RealCartesiaTtsClient(
-        AsyncCartesia(api_key=config.cartesia_api_key), voice_id=config.cartesia_voice_id
-    )
+    tts_client = make_tts_client(config, http_clients)
 
     async def stt_fn(wav_bytes: bytes) -> str:
         return await transcribe_with_retry(stt_client, wav_bytes, model=config.stt_model)
