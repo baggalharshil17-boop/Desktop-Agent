@@ -116,11 +116,12 @@ async def render_chart(
 
     plot_kwargs = dict(
         type="candle",
-        addplot=addplots or None,
         volume=False,
         style="charles",
         savefig=path,
     )
+    if addplots:
+        plot_kwargs["addplot"] = addplots
     if hlines is not None:
         plot_kwargs["hlines"] = hlines
     if panel_ratios is not None:

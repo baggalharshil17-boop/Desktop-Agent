@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for testing
+
 import pandas as pd
 import pytest
 
@@ -93,6 +96,21 @@ async def test_render_chart_saves_a_png_and_returns_its_path(tmp_path):
 
     path = await render_chart(
         "RELIANCE", ["moving_average", "rsi"], history_fn=history_fn,
+        interval="day", output_dir=str(tmp_path),
+    )
+
+    import os
+    assert os.path.exists(path)
+    assert path.endswith(".png")
+
+
+@pytest.mark.asyncio
+async def test_render_chart_saves_plain_candlestick_with_no_indicators(tmp_path):
+    """Regression test: render_chart with no indicators (addplot=None path) should produce PNG."""
+    history_fn = _make_history_fn([float(100 + i) for i in range(30)])
+
+    path = await render_chart(
+        "RELIANCE", indicators=None, history_fn=history_fn,
         interval="day", output_dir=str(tmp_path),
     )
 
