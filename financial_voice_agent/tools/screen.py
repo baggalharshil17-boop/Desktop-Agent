@@ -18,7 +18,7 @@ async def capture_screen(
 ) -> dict:
     region = window_finder()
     if region is None:
-        raise WindowNotFoundError("Kite window not found")
+        raise WindowNotFoundError("No active window found")
     jpeg_bytes = screenshot_fn(region)
     os.makedirs(screenshot_dir, exist_ok=True)
     filename = f"capture_{int(time.time() * 1000)}.jpg"
@@ -40,17 +40,18 @@ async def capture_screen(
     }
 
 
-def find_kite_window() -> dict | None:
-    """Real adapter: locates a window whose title contains "Kite" using
-    pygetwindow. Verify this title-matching heuristic against your actual
-    browser/window setup at build time -- exact title varies by browser and
-    by whether Kite is a PWA, browser tab, or dedicated window."""
+def find_active_window() -> dict | None:
+    """Real adapter: locates the currently focused window using pygetwindow.
+    Returns None if nothing is focused (e.g. the desktop itself is active).
+    Note: pygetwindow can report coordinates a few pixels outside the visible
+    screen for a maximized window, due to Windows' invisible DWM border
+    padding -- a pre-existing imprecision, not something this function
+    corrects for."""
     import pygetwindow as gw
 
-    matches = [w for w in gw.getAllWindows() if "kite" in w.title.lower()]
-    if not matches:
+    window = gw.getActiveWindow()
+    if window is None:
         return None
-    window = matches[0]
     return {"left": window.left, "top": window.top, "width": window.width, "height": window.height}
 
 

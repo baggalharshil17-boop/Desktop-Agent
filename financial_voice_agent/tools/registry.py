@@ -22,7 +22,7 @@ from financial_voice_agent.tools.screen import (
     WindowNotFoundError,
     capture_region,
     capture_screen,
-    find_kite_window,
+    find_active_window,
 )
 
 _FIXTURES_DIR = str(pathlib.Path(__file__).resolve().parent.parent.parent / "fixtures")
@@ -112,7 +112,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "capture_screen",
-            "description": "Capture the current Kite window as an image, for questions about what's visible on screen.",
+            "description": "Capture the currently active window as an image, for questions about what's visible on screen.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -196,7 +196,7 @@ async def _dispatch(
             mode=config.mode, fixtures_dir=_FIXTURES_DIR,
         )
     if call.name == "capture_screen":
-        return await capture_screen(window_finder=find_kite_window, screenshot_fn=capture_region)
+        return await capture_screen(window_finder=find_active_window, screenshot_fn=capture_region)
     if call.name == "show_chart":
         history_fn = functools.partial(
             get_ohlc_history,
@@ -240,7 +240,7 @@ def make_tool_executor(
         except InstrumentNotFoundError as exc:
             return {"error": str(exc)}
         except WindowNotFoundError:
-            return {"error": "Could not find the Kite window on screen"}
+            return {"error": "Could not find an active window to capture"}
         except UnknownChartIndicatorError as exc:
             return {"error": str(exc)}
         except TypeError as exc:
