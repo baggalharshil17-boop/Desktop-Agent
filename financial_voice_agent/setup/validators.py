@@ -64,3 +64,23 @@ def validate_tavily_key(api_key: str, *, http_client: httpx.Client | None = None
         if owns_client:
             client.close()
     return ValidationResult(ok=True, message="Tavily key OK")
+
+
+def validate_fish_audio_key(api_key: str, *, http_client: httpx.Client | None = None) -> ValidationResult:
+    owns_client = http_client is None
+    client = http_client or httpx.Client(base_url="https://api.fish.audio", timeout=15.0)
+    try:
+        response = client.post(
+            "/v1/tts",
+            headers={"Authorization": f"Bearer {api_key}", "model": "s2.1-pro-free"},
+            json={"text": "Test.", "format": "pcm", "sample_rate": 16000},
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return ValidationResult(ok=False, message=f"Fish Audio key rejected: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        return ValidationResult(ok=False, message=f"Could not reach Fish Audio: {exc}")
+    finally:
+        if owns_client:
+            client.close()
+    return ValidationResult(ok=True, message="Fish Audio key OK")

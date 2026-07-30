@@ -3,6 +3,7 @@ import pytest
 
 from financial_voice_agent.setup.validators import (
     validate_cartesia_key,
+    validate_fish_audio_key,
     validate_groq_key,
     validate_huggingface_key,
     validate_tavily_key,
@@ -133,5 +134,29 @@ async def test_validate_tavily_key_reports_failure_on_401():
     client = httpx.Client(base_url="https://api.tavily.com", transport=transport)
 
     result = validate_tavily_key("bad-key", http_client=client)
+
+    assert result.ok is False
+
+
+def test_validate_fish_audio_key_ok_on_200_response():
+    def handler(request):
+        return httpx.Response(200, content=b"audio-bytes")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(base_url="https://api.fish.audio", transport=transport)
+
+    result = validate_fish_audio_key("test-key", http_client=client)
+
+    assert result.ok is True
+
+
+def test_validate_fish_audio_key_reports_failure_on_402():
+    def handler(request):
+        return httpx.Response(402, json={"message": "Insufficient API credit", "status": 402})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(base_url="https://api.fish.audio", transport=transport)
+
+    result = validate_fish_audio_key("test-key", http_client=client)
 
     assert result.ok is False

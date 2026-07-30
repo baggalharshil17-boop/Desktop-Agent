@@ -9,6 +9,7 @@ def test_render_config_yaml_produces_valid_yaml_with_chosen_values():
         stt_model="whisper-large-v3-turbo",
         llm_provider="groq",
         llm_model="qwen/qwen3.6-27b",
+        tts_provider="cartesia",
         cartesia_voice_id="db6b0ed5-d5d3-463d-ae85-518a07d3c2b4",
         mode="mock",
     )
@@ -33,6 +34,7 @@ def test_render_config_yaml_includes_required_top_level_sections():
         stt_model="openai/whisper-large-v3-turbo",
         llm_provider="huggingface",
         llm_model="qwen/qwen3.6-27b",
+        tts_provider="cartesia",
         cartesia_voice_id="some-voice-id",
         mode="live",
     )
@@ -57,6 +59,7 @@ def test_render_config_yaml_is_loadable_by_the_real_config_loader(tmp_path):
         stt_model="whisper-large-v3-turbo",
         llm_provider="groq",
         llm_model="qwen/qwen3.6-27b",
+        tts_provider="cartesia",
         cartesia_voice_id="db6b0ed5-d5d3-463d-ae85-518a07d3c2b4",
         mode="mock",
     )
@@ -69,3 +72,21 @@ def test_render_config_yaml_is_loadable_by_the_real_config_loader(tmp_path):
 
     assert config.stt_provider == "groq"
     assert config.llm_model == "qwen/qwen3.6-27b"
+
+
+def test_render_config_yaml_renders_fish_audio_model_when_provider_is_fish_audio():
+    text = render_config_yaml(
+        stt_provider="groq",
+        stt_model="whisper-large-v3-turbo",
+        llm_provider="groq",
+        llm_model="qwen/qwen3.6-27b",
+        tts_provider="fish_audio",
+        fish_audio_model="s2.1-pro-free",
+        mode="mock",
+    )
+
+    parsed = yaml.safe_load(text)
+
+    assert parsed["tts"]["provider"] == "fish_audio"
+    assert parsed["tts"]["fish_audio_model"] == "s2.1-pro-free"
+    assert "voice_id" not in parsed["tts"]

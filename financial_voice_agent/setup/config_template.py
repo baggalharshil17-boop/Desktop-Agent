@@ -16,8 +16,8 @@ audio:
 
 input_mode: "always_on"  # or "ptt"
 tts:
-  provider: "cartesia"  # or "deepgram" -- deepgram has no adapter yet
-  voice_id: "{cartesia_voice_id}"
+  provider: "{tts_provider}"  # or "cartesia"/"fish_audio"
+{tts_provider_field}
 
 stt:
   provider: "{stt_provider}"  # or "groq"/"huggingface"
@@ -36,6 +36,8 @@ storage:
 mode: "{mode}"  # or "live"/"mock"
 """
 
+FISH_AUDIO_DEFAULT_MODEL = "s2.1-pro-free"
+
 
 def render_config_yaml(
     *,
@@ -43,14 +45,21 @@ def render_config_yaml(
     stt_model: str,
     llm_provider: str,
     llm_model: str,
-    cartesia_voice_id: str,
+    tts_provider: str,
+    cartesia_voice_id: str = "",
+    fish_audio_model: str = FISH_AUDIO_DEFAULT_MODEL,
     mode: str,
 ) -> str:
+    if tts_provider == "cartesia":
+        tts_provider_field = f'  voice_id: "{cartesia_voice_id}"'
+    else:
+        tts_provider_field = f'  fish_audio_model: "{fish_audio_model}"'
     return _TEMPLATE.format(
         stt_provider=stt_provider,
         stt_model=stt_model,
         llm_provider=llm_provider,
         llm_model=llm_model,
-        cartesia_voice_id=cartesia_voice_id,
+        tts_provider=tts_provider,
+        tts_provider_field=tts_provider_field,
         mode=mode,
     )

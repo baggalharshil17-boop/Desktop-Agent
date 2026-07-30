@@ -28,6 +28,7 @@ from financial_voice_agent.setup.env_file import merge_env_values, read_env_file
 from financial_voice_agent.setup.validators import (
     ValidationResult,
     validate_cartesia_key,
+    validate_fish_audio_key,
     validate_groq_key,
     validate_huggingface_key,
     validate_tavily_key,
@@ -97,6 +98,7 @@ def main() -> None:
 
     new_env: dict[str, str] = {}
     cartesia_voice_id = ""
+    fish_audio_model = "s2.1-pro-free"
 
     stt_provider = _ask_choice("STT provider", ["groq", "huggingface"], default="groq")
     llm_provider = _ask_choice("LLM provider", ["groq", "huggingface"], default="groq")
@@ -104,6 +106,7 @@ def main() -> None:
         "  Note: whichever LLM model you use must support BOTH tool calling and vision "
         "for capture_screen results to actually be described, not just confirmed."
     )
+    tts_provider = _ask_choice("TTS provider", ["cartesia", "fish_audio"], default="cartesia")
     mode = _ask_choice(
         "Mode -- 'mock' uses canned data and needs no Zerodha account; 'live' needs Kite Connect set up separately",
         ["mock", "live"],
@@ -124,21 +127,28 @@ def main() -> None:
         if value:
             new_env["HF_TOKEN"] = value
 
-    cartesia_key, cartesia_result = _collect_and_validate(
-        "CARTESIA_API_KEY", "Cartesia API key (play.cartesia.ai)", validate_cartesia_key
-    )
-    if cartesia_key:
-        new_env["CARTESIA_API_KEY"] = cartesia_key
-        voices = (cartesia_result.data or {}).get("voices", [])
-        if voices:
-            print("\n  Available voices:")
-            for i, (voice_id, name) in enumerate(voices[:15], start=1):
-                print(f"    {i}. {name} ({voice_id})")
-            choice = input("  Pick a voice number (or press Enter to type an id manually): ").strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(voices[:15]):
-                cartesia_voice_id = voices[int(choice) - 1][0]
-            else:
-                cartesia_voice_id = input("  Paste a voice_id: ").strip()
+    if tts_provider == "cartesia":
+        cartesia_key, cartesia_result = _collect_and_validate(
+            "CARTESIA_API_KEY", "Cartesia API key (play.cartesia.ai)", validate_cartesia_key
+        )
+        if cartesia_key:
+            new_env["CARTESIA_API_KEY"] = cartesia_key
+            voices = (cartesia_result.data or {}).get("voices", [])
+            if voices:
+                print("\n  Available voices:")
+                for i, (voice_id, name) in enumerate(voices[:15], start=1):
+                    print(f"    {i}. {name} ({voice_id})")
+                choice = input("  Pick a voice number (or press Enter to type an id manually): ").strip()
+                if choice.isdigit() and 1 <= int(choice) <= len(voices[:15]):
+                    cartesia_voice_id = voices[int(choice) - 1][0]
+                else:
+                    cartesia_voice_id = input("  Paste a voice_id: ").strip()
+    else:
+        fish_audio_key, _ = _collect_and_validate(
+            "FISH_AUDIO_API_KEY", "Fish Audio API key (fish.audio/app/api-keys)", validate_fish_audio_key
+        )
+        if fish_audio_key:
+            new_env["FISH_AUDIO_API_KEY"] = fish_audio_key
 
     tavily_value, _ = _collect_and_validate(
         "TAVILY_API_KEY", "Tavily API key (tavily.com) -- for news search", validate_tavily_key
@@ -158,7 +168,9 @@ def main() -> None:
             stt_model=stt_model,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            tts_provider=tts_provider,
             cartesia_voice_id=cartesia_voice_id or "<pick a voice id from https://play.cartesia.ai/voices>",
+            fish_audio_model=fish_audio_model,
             mode=mode,
         )
         CONFIG_PATH.write_text(config_text)
