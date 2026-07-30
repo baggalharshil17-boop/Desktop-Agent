@@ -8,7 +8,7 @@ from financial_voice_agent.config import Config
 
 GROQ_BASE_URL = "https://api.groq.com"
 CARTESIA_BASE_URL = "https://api.cartesia.ai"
-DEEPGRAM_BASE_URL = "https://api.deepgram.com"
+FISH_AUDIO_BASE_URL = "https://api.fish.audio"
 KITE_BASE_URL = "https://api.kite.trade"
 TAVILY_BASE_URL = "https://api.tavily.com"
 INDIAN_STOCK_BASE_URL = "https://stock.indianapi.in"
@@ -40,10 +40,10 @@ async def create_http_clients(config: Config) -> HTTPClients:
             headers={"X-API-Key": config.cartesia_api_key or ""},
             timeout=TTS_TIMEOUT,
         )
-    elif config.tts_provider == "deepgram":
+    elif config.tts_provider == "fish_audio":
         tts = httpx.AsyncClient(
-            base_url=DEEPGRAM_BASE_URL,
-            headers={"Authorization": f"Token {config.deepgram_api_key or ''}"},
+            base_url=FISH_AUDIO_BASE_URL,
+            headers={"Authorization": f"Bearer {config.fish_audio_api_key or ''}"},
             timeout=TTS_TIMEOUT,
         )
     else:

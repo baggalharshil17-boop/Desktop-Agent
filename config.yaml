@@ -51,8 +51,12 @@ audio:
 
 input_mode: "always_on"  # or "ptt"
 tts:
-  provider: "cartesia"  # or "deepgram"
+  provider: "cartesia"  # or "fish_audio"
   voice_id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
+  # Only used when provider is "fish_audio". "s2.1-pro-free" works with
+  # zero Fish Audio API credit balance; other models ("s2.1-pro", "s2-pro",
+  # "s1") require a funded account.
+  # fish_audio_model: "s2.1-pro-free"
 
 stt:
   provider: "groq"  # or "huggingface" -- HF Inference credits ran out (402), switched back

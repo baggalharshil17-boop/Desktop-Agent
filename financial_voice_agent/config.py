@@ -13,7 +13,7 @@ from dotenv import dotenv_values
 # touching audio at all.
 _DEFAULT_ECHO_MARGIN = 2.0
 
-_VALID_TTS_PROVIDERS = {"cartesia", "deepgram"}
+_VALID_TTS_PROVIDERS = {"cartesia", "fish_audio"}
 _VALID_STT_PROVIDERS = {"groq", "huggingface"}
 _VALID_LLM_PROVIDERS = {"groq", "huggingface"}
 _PLACEHOLDER_RE = re.compile(r"^<.*>$")
@@ -38,6 +38,7 @@ class Config:
     input_mode: str
     tts_provider: str
     cartesia_voice_id: str | None
+    fish_audio_model: str | None
     stt_provider: str
     stt_model: str
     llm_provider: str
@@ -47,7 +48,7 @@ class Config:
     processing_overlay_enabled: bool
     groq_api_key: str | None
     cartesia_api_key: str | None
-    deepgram_api_key: str | None
+    fish_audio_api_key: str | None
     huggingface_api_key: str | None
     kite_api_key: str | None
     kite_access_token: str | None
@@ -61,7 +62,7 @@ def _load_env(env_path: str) -> dict[str, str]:
     for key in (
         "GROQ_API_KEY",
         "CARTESIA_API_KEY",
-        "DEEPGRAM_API_KEY",
+        "FISH_AUDIO_API_KEY",
         "HF_TOKEN",
         "KITE_API_KEY",
         "KITE_ACCESS_TOKEN",
@@ -89,15 +90,15 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
 
         if tts_provider not in _VALID_TTS_PROVIDERS:
             raise ConfigError(
-                f"tts.provider must be 'cartesia' or 'deepgram', got {tts_provider!r}"
+                f"tts.provider must be 'cartesia' or 'fish_audio', got {tts_provider!r}"
             )
 
         cartesia_api_key = env.get("CARTESIA_API_KEY")
-        deepgram_api_key = env.get("DEEPGRAM_API_KEY")
+        fish_audio_api_key = env.get("FISH_AUDIO_API_KEY")
         if tts_provider == "cartesia" and not cartesia_api_key:
             raise ConfigError("tts.provider is 'cartesia' but CARTESIA_API_KEY is not set")
-        if tts_provider == "deepgram" and not deepgram_api_key:
-            raise ConfigError("tts.provider is 'deepgram' but DEEPGRAM_API_KEY is not set")
+        if tts_provider == "fish_audio" and not fish_audio_api_key:
+            raise ConfigError("tts.provider is 'fish_audio' but FISH_AUDIO_API_KEY is not set")
 
         cartesia_voice_id = raw.get("tts", {}).get("voice_id")
         if tts_provider == "cartesia" and (
@@ -107,6 +108,8 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
                 "tts.provider is 'cartesia' but tts.voice_id in config.yaml is not set "
                 "(still a placeholder) — pick a voice id from Cartesia's voice library"
             )
+
+        fish_audio_model = raw.get("tts", {}).get("fish_audio_model")
 
         stt_provider = raw["stt"]["provider"]
         if stt_provider not in _VALID_STT_PROVIDERS:
@@ -146,6 +149,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             input_mode=raw["input_mode"],
             tts_provider=tts_provider,
             cartesia_voice_id=cartesia_voice_id,
+            fish_audio_model=fish_audio_model,
             stt_provider=stt_provider,
             stt_model=stt_model,
             llm_provider=llm_provider,
@@ -155,7 +159,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> Con
             processing_overlay_enabled=raw.get("overlay", {}).get("enabled", True),
             groq_api_key=groq_api_key,
             cartesia_api_key=cartesia_api_key,
-            deepgram_api_key=deepgram_api_key,
+            fish_audio_api_key=fish_audio_api_key,
             huggingface_api_key=huggingface_api_key,
             kite_api_key=env.get("KITE_API_KEY"),
             kite_access_token=env.get("KITE_ACCESS_TOKEN"),

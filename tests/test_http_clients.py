@@ -24,6 +24,7 @@ def _make_config(
         input_mode="always_on",
         tts_provider=tts_provider,
         cartesia_voice_id="test-voice-id",
+        fish_audio_model=None,
         stt_provider="huggingface",
         stt_model="openai/whisper-large-v3",
         llm_provider="huggingface",
@@ -33,7 +34,7 @@ def _make_config(
         processing_overlay_enabled=True,
         groq_api_key="groq-secret",
         cartesia_api_key="cartesia-secret",
-        deepgram_api_key="deepgram-secret",
+        fish_audio_api_key="fish-audio-secret",
         huggingface_api_key="hf-secret",
         kite_api_key=kite_api_key,
         kite_access_token=kite_access_token,
@@ -85,12 +86,12 @@ async def test_tts_client_uses_cartesia_key_when_provider_is_cartesia():
 
 
 @pytest.mark.asyncio
-async def test_tts_client_uses_deepgram_key_when_provider_is_deepgram():
-    config = _make_config(tts_provider="deepgram")
+async def test_tts_client_uses_fish_audio_key_when_provider_is_fish_audio():
+    config = _make_config(tts_provider="fish_audio")
 
     clients = await create_http_clients(config)
     try:
-        assert clients.tts.headers["Authorization"] == "Token deepgram-secret"
+        assert clients.tts.headers["Authorization"] == "Bearer fish-audio-secret"
     finally:
         await close_http_clients(clients)
 
