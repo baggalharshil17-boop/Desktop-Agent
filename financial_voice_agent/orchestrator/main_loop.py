@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import sys
 import threading
 from collections import deque
 from typing import Callable
@@ -170,7 +171,18 @@ async def play_with_barge_in(
             if barge_in_enabled and pipeline.speech_active.is_set():
                 interrupt_event.set()
             await asyncio.sleep(poll_interval)
-        return playback_task.result()
+        try:
+            return playback_task.result()
+        except OSError as exc:
+            # The speaker failing is not a reason to end the conversation.
+            # PortAudio surfaces device-level problems here as OSError (e.g.
+            # "[Errno -9999] Unanticipated host error" when the audio endpoint
+            # changes mid-playback, such as a Bluetooth headset switching
+            # profiles). Report it and let the loop keep listening rather than
+            # crashing the agent -- the user can still be heard, and the next
+            # turn may well play fine.
+            print(f"  [audio] playback failed, skipping this response: {exc}", file=sys.stderr)
+            return False
     finally:
         if keyword_watch_task is not None:
             keyword_watch_task.cancel()

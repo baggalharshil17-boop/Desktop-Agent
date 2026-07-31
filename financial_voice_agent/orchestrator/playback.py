@@ -57,10 +57,25 @@ class AudioPlayback:
         return True
 
     def close(self) -> None:
+        # Every step is best-effort and independent. close() runs in the
+        # shutdown path, including when the stream has already failed (e.g.
+        # PortAudio's "[Errno -9999] Unanticipated host error" after the audio
+        # endpoint changes mid-playback). stop_stream() raises on an
+        # already-broken stream, which would otherwise mask the original error
+        # and leave the PyAudio instance un-terminated.
         if self._stream is not None:
-            self._stream.stop_stream()
-            self._stream.close()
+            try:
+                self._stream.stop_stream()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self._stream.close()
+            except Exception:  # noqa: BLE001
+                pass
             self._stream = None
         if self._pa is not None:
-            self._pa.terminate()
+            try:
+                self._pa.terminate()
+            except Exception:  # noqa: BLE001
+                pass
             self._pa = None

@@ -95,3 +95,38 @@ def test_close_stops_and_closes_stream_and_terminates_pyaudio():
     assert stream.stopped is True
     assert stream.closed is True
     assert fake_pa.terminated is True
+
+
+def test_close_still_terminates_pyaudio_when_the_stream_is_already_broken():
+    # After a device-level failure (PortAudio "[Errno -9999] Unanticipated
+    # host error"), stop_stream() itself raises. close() must not propagate
+    # that -- doing so masked the original error and leaked the PyAudio
+    # instance, turning one audio glitch into a crash on the way out.
+    fake_pa = _FakePyAudio()
+    playback = AudioPlayback(pyaudio_factory=lambda: fake_pa)
+    playback.open()
+    stream = fake_pa.opened_stream
+
+    def _raise(*args, **kwargs):
+        raise OSError(-9999, "Unanticipated host error")
+
+    stream.stop_stream = _raise
+    stream.close = _raise
+
+    playback.close()  # must not raise
+
+    assert fake_pa.terminated is True
+
+
+def test_close_is_idempotent_after_a_failed_close():
+    fake_pa = _FakePyAudio()
+    playback = AudioPlayback(pyaudio_factory=lambda: fake_pa)
+    playback.open()
+
+    def _raise(*args, **kwargs):
+        raise OSError(-9999, "Unanticipated host error")
+
+    fake_pa.opened_stream.stop_stream = _raise
+
+    playback.close()
+    playback.close()  # second call must be a no-op, not a crash

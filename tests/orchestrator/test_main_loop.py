@@ -557,3 +557,58 @@ async def test_run_voice_loop_works_without_processing_callbacks(tmp_path):
     )
 
     assert playback.play_calls == [b"audio-bytes"]
+
+
+class _FailingPlayback:
+    """Mimics PortAudio failing at the device level mid-write, which surfaces
+    as OSError out of playback.play()."""
+
+    def __init__(self, *, fail_on_call: int = 1):
+        self.play_calls: list[bytes] = []
+        self._fail_on_call = fail_on_call
+
+    def play(self, pcm_bytes: bytes, *, chunk_size: int = 1024, interrupt_event=None) -> bool:
+        self.play_calls.append(pcm_bytes)
+        if len(self.play_calls) >= self._fail_on_call:
+            raise OSError(-9999, "Unanticipated host error")
+        return True
+
+
+@pytest.mark.asyncio
+async def test_play_with_barge_in_survives_a_device_level_playback_failure():
+    pipeline = _FakePipeline([])
+    playback = _FailingPlayback()
+
+    completed = await play_with_barge_in(playback, b"audio", pipeline, barge_in_enabled=False)
+
+    assert completed is False  # reported as not-played, not raised
+
+
+@pytest.mark.asyncio
+async def test_run_voice_loop_keeps_listening_after_the_speaker_fails(tmp_path):
+    # A speaker failing must not end the conversation: the user can still be
+    # heard, and the next turn may play fine. Before this, the OSError
+    # propagated out of run_voice_loop and killed the agent.
+    db_path = str(tmp_path / "turns.db")
+    init_db(db_path)
+    pipeline = _FakePipeline([b"utterance-1", b"utterance-2"])
+    playback = _FailingPlayback()
+    transcripts = []
+
+    async def stt_fn(wav):
+        transcripts.append(wav)
+        return "hello"
+
+    async def llm_fn(transcript, history):
+        return LlmTurnResult(response_text="hi there", tool_calls_json=None, tool_results_json=None)
+
+    async def tts_fn(text):
+        return b"audio-bytes"
+
+    await run_voice_loop(
+        pipeline, playback, stt_fn=stt_fn, llm_fn=llm_fn, tts_fn=tts_fn, db_path=db_path
+    )
+
+    # Both utterances were still transcribed despite playback failing on each.
+    assert len(transcripts) == 2
+    assert len(playback.play_calls) == 2
