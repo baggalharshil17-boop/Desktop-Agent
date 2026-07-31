@@ -74,17 +74,23 @@ def is_allowed_chart_path(image_path: str, charts_dir: str = _CHARTS_DIR) -> boo
     return resolved.lower().endswith(".png") and os.path.isfile(resolved)
 
 
-def _listen(inbox: "queue.Queue[str]", port: int, token: str | None) -> None:
+def bind_listener_socket(port: int) -> socket.socket | None:
+    """Binds the overlay's UDP port, or returns None if something already
+    holds it. Called before any window is built: an overlay that cannot
+    receive messages must not put a window on screen, because a visible but
+    deaf overlay looks identical to a working one and hides the real cause
+    (usually an orphaned overlay from a previous run that still owns the
+    port, so the agent's datagrams go to that stale process instead)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("127.0.0.1", port))
     except OSError:
-        print(
-            f"screen_overlay: could not bind UDP port {port} (already in use?), "
-            "overlay will not receive messages",
-            file=sys.stderr,
-        )
-        return
+        sock.close()
+        return None
+    return sock
+
+
+def _listen(inbox: "queue.Queue[str]", sock: socket.socket, token: str | None) -> None:
     if not token:
         print(
             f"screen_overlay: no {OVERLAY_TOKEN_ENV_VAR} set, refusing to process datagrams "
@@ -164,7 +170,19 @@ class ChartPanel:
         tick()
 
 
-def main() -> None:
+def main() -> int:
+    # Claim the port before building any UI -- see bind_listener_socket.
+    sock = bind_listener_socket(DEFAULT_OVERLAY_PORT)
+    if sock is None:
+        print(
+            f"screen_overlay: UDP port {DEFAULT_OVERLAY_PORT} is already in use, so this "
+            "overlay could never receive anything -- exiting instead of showing a window "
+            "that does nothing. An overlay from a previous run is probably still alive; "
+            "close it and restart the agent.",
+            file=sys.stderr,
+        )
+        return 1
+
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes("-topmost", True)
@@ -194,9 +212,7 @@ def main() -> None:
         f"charts dir {os.path.realpath(_CHARTS_DIR)!r}",
         file=sys.stderr,
     )
-    threading.Thread(
-        target=_listen, args=(inbox, DEFAULT_OVERLAY_PORT, token), daemon=True
-    ).start()
+    threading.Thread(target=_listen, args=(inbox, sock, token), daemon=True).start()
 
     def poll() -> None:
         try:
@@ -230,7 +246,8 @@ def main() -> None:
 
     root.after(30, poll)
     root.mainloop()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
