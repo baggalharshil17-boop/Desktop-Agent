@@ -189,6 +189,11 @@ def main() -> None:
 
     inbox: "queue.Queue[str]" = queue.Queue()
     token = read_overlay_token()
+    print(
+        f"screen_overlay: listening on 127.0.0.1:{DEFAULT_OVERLAY_PORT}, "
+        f"charts dir {os.path.realpath(_CHARTS_DIR)!r}",
+        file=sys.stderr,
+    )
     threading.Thread(
         target=_listen, args=(inbox, DEFAULT_OVERLAY_PORT, token), daemon=True
     ).start()
@@ -209,8 +214,17 @@ def main() -> None:
                         image_path = message[len("show_chart:") :]
                         if is_allowed_chart_path(image_path):
                             chart_panel.show(image_path)
-                except Exception:  # noqa: BLE001 -- one bad message must never kill the poll loop
-                    pass
+                        else:
+                            # Silence here is indistinguishable from "no chart
+                            # was ever sent", which makes a rejected path
+                            # impossible to diagnose from the user's side.
+                            print(
+                                f"screen_overlay: refused chart path {image_path!r} -- "
+                                f"not an existing .png inside {os.path.realpath(_CHARTS_DIR)!r}",
+                                file=sys.stderr,
+                            )
+                except Exception as exc:  # noqa: BLE001 -- one bad message must never kill the poll loop
+                    print(f"screen_overlay: failed to handle {message[:80]!r}: {exc}", file=sys.stderr)
         finally:
             root.after(30, poll)
 
