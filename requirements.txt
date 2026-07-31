@@ -6,10 +6,17 @@ huggingface_hub
 kiteconnect
 pytest
 pytest-asyncio
-numpy
+numpy==2.4.0
 pandas
 noisereduce
-torch
+# torch and torchaudio MUST be installed together from the same index, or
+# torchaudio's compiled extension fails to resolve torch's symbols at import
+# ("OSError: [WinError 127] The specified procedure could not be found").
+# torchaudio is a runtime dependency via silero-vad; it is listed explicitly
+# so it can't be resolved transitively from a different index than torch.
+# See README's Prerequisites for the required --index-url.
+torch==2.13.0
+torchaudio==2.11.0
 silero-vad
 pyaudio
 janus

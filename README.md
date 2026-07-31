@@ -7,14 +7,23 @@ A read-only AI voice assistant for a Zerodha Kite trading dashboard. See
 
 ### 1. Prerequisites
 
-- Python 3.11+ (developed against 3.14).
+- Python 3.10+ (developed against 3.14, also verified on 3.10).
 - `pip install -r requirements.txt` installs everything, but two packages
   need a callout on Windows:
-  - **torch** (used for voice-activity detection): if you don't have or
-    want a GPU, install the smaller CPU-only build first, or plain
-    `pip install torch` may pull a multi-GB CUDA build:
+  - **torch / torchaudio** (used for voice-activity detection via
+    silero-vad): install **both together, from the CPU index, before
+    anything else**. Plain `pip install torch` may pull a multi-GB CUDA
+    build, and — more importantly — installing them separately or from
+    different indexes gives you mismatched builds whose compiled extensions
+    can't link, failing at startup with
+    `OSError: [WinError 127] The specified procedure could not be found`:
     ```
-    pip install torch --index-url https://download.pytorch.org/whl/cpu
+    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+    ```
+    Verify before continuing — both versions should print with `+cpu` and
+    the extension should report `True`:
+    ```
+    python -c "import torch, torchaudio; from torchaudio._extension import _IS_TORCHAUDIO_EXT_AVAILABLE as e; print(torch.__version__, torchaudio.__version__, 'ext:', e)"
     ```
   - **pyaudio** (microphone/speaker access): sometimes fails to build from
     source on Windows. If `pip install -r requirements.txt` fails on it
