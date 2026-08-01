@@ -186,3 +186,32 @@ async def test_alpha_vantage_client_carries_api_key_as_query_param():
         assert clients.alpha_vantage.params["apikey"] == "alpha-vantage-secret"
     finally:
         await close_http_clients(clients)
+
+
+@pytest.mark.asyncio
+async def test_alpha_vantage_client_merges_api_key_into_request_url_on_the_wire():
+    # Asserting on client.params directly (as the test above does) only proves
+    # the client object was constructed with that default -- it doesn't prove
+    # httpx actually merges it into a dispatched request's URL, which relies on
+    # httpx's client-level params merging behavior and could change in a future
+    # httpx version. This test intercepts the real outgoing request and checks
+    # its URL query params instead, proving the merge happens on the wire.
+    config = _make_config()
+    captured_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={})
+
+    clients = await create_http_clients(config)
+    try:
+        clients.alpha_vantage._transport = httpx.MockTransport(handler)
+        await clients.alpha_vantage.get("/query", params={"function": "RSI", "symbol": "TEST"})
+
+        assert len(captured_requests) == 1
+        query = dict(captured_requests[0].url.params)
+        assert query["apikey"] == "alpha-vantage-secret"
+        assert query["function"] == "RSI"
+        assert query["symbol"] == "TEST"
+    finally:
+        await close_http_clients(clients)

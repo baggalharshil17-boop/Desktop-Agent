@@ -1,7 +1,7 @@
 {
   "results": [
     {"symbol": "TCS.BSE", "price": 3850.0, "rsi": 72.5},
-    {"symbol": "INFY.BSE", "price": 1920.0, "rsi": 68.3}
+    {"symbol": "INFY.BSE", "price": 1920.0, "rsi": 71.0}
   ],
   "count": 2
 }

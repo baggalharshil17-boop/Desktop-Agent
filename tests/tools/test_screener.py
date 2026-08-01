@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 
@@ -213,6 +215,114 @@ async def test_screen_stocks_maintains_pacing_across_rsi_to_price_transition():
     # Total: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
     assert sleep_calls == [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
     assert result["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_screen_stocks_serializes_concurrent_calls_so_pacing_does_not_interleave():
+    """Two concurrent screen_stocks calls (e.g. the LLM emitting two tool
+    calls in one turn, dispatched via asyncio.gather by the orchestrator)
+    must not interleave their requests -- each call's pacer assumes it's the
+    only one making requests, so interleaving would blow through Alpha
+    Vantage's rate limit at ~2x the intended rate. The module-level lock
+    should force the second call's requests to only start after the first
+    call's are entirely done.
+    """
+    call_log = []
+
+    async def fake_sleep(seconds):
+        call_log.append(("sleep", seconds))
+
+    def make_client(tag):
+        def handler(request: httpx.Request) -> httpx.Response:
+            call_log.append(("request", tag, dict(request.url.params).get("symbol")))
+            return httpx.Response(200, json=_rsi_response(10.0))
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://www.alphavantage.co")
+
+    client_a = make_client("a")
+    client_b = make_client("b")
+
+    await asyncio.gather(
+        screen_stocks(
+            "tech", http_client=client_a, mode="live", momentum_threshold=70.0,
+            request_interval_seconds=1.0, sleep_fn=fake_sleep,
+        ),
+        screen_stocks(
+            "pharma", http_client=client_b, mode="live", momentum_threshold=70.0,
+            request_interval_seconds=1.0, sleep_fn=fake_sleep,
+        ),
+    )
+
+    request_tags = [entry[1] for entry in call_log if entry[0] == "request"]
+    # All of one call's requests must be contiguous -- not interleaved with
+    # the other call's requests (e.g. not "a", "b", "a", "b", ...).
+    first_switch_index = next(i for i, tag in enumerate(request_tags) if tag != request_tags[0])
+    assert request_tags[:first_switch_index] == [request_tags[0]] * first_switch_index
+    assert request_tags[first_switch_index:] == [request_tags[first_switch_index]] * len(
+        request_tags[first_switch_index:]
+    )
+    assert set(request_tags) == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_screen_stocks_returns_daily_limit_error_when_message_mentions_daily_cap():
+    symbols = SECTOR_SYMBOLS["tech"]
+    responses = {
+        (symbol, "RSI"): {
+            "Information": (
+                "Thank you for using Alpha Vantage! Our standard API rate limit is "
+                "25 requests per day. Please visit..."
+            )
+        }
+        for symbol in symbols
+    }
+    client = _client_with_responses(responses)
+
+    result = await screen_stocks("tech", http_client=client, mode="live", request_interval_seconds=0.0)
+
+    assert result == {"error": "Screener has hit its daily data limit, try again tomorrow"}
+
+
+@pytest.mark.asyncio
+async def test_screen_stocks_returns_per_minute_error_when_message_does_not_mention_daily_cap():
+    symbols = SECTOR_SYMBOLS["tech"]
+    responses = {
+        (symbol, "RSI"): {"Note": "Thank you for using Alpha Vantage! Our standard API rate limit is..."}
+        for symbol in symbols
+    }
+    client = _client_with_responses(responses)
+
+    result = await screen_stocks("tech", http_client=client, mode="live", request_interval_seconds=0.0)
+
+    assert result == {"error": "Screener temporarily rate-limited, try again in a minute"}
+
+
+@pytest.mark.asyncio
+async def test_screen_stocks_coerces_string_numeric_params():
+    symbols = SECTOR_SYMBOLS["tech"]
+    responses = {}
+    for i, symbol in enumerate(symbols):
+        responses[(symbol, "RSI")] = _rsi_response(75.0 + i)
+    for symbol in symbols:
+        responses[(symbol, "GLOBAL_QUOTE")] = _quote_response(100.0)
+    client = _client_with_responses(responses)
+
+    result = await screen_stocks(
+        "tech", http_client=client, mode="live", momentum_threshold="70",
+        limit="2", price_min="0", price_max="1000", request_interval_seconds=0.0,
+    )
+
+    assert "error" not in result
+    assert result["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_screen_stocks_returns_clean_error_for_unparseable_numeric_param():
+    result = await screen_stocks(
+        "tech", http_client=None, mode="live", limit="not-a-number",
+        request_interval_seconds=0.0,
+    )
+
+    assert "error" in result
 
 
 @pytest.mark.asyncio

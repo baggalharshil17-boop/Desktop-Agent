@@ -22,13 +22,13 @@ from financial_voice_agent.tools.kite_client import (
 )
 from financial_voice_agent.tools.news import get_news
 from financial_voice_agent.tools.quotes import get_positions_holdings, get_quote
-from financial_voice_agent.tools.screener import screen_stocks
 from financial_voice_agent.tools.screen import (
     WindowNotFoundError,
     capture_region,
     capture_screen,
     find_active_window,
 )
+from financial_voice_agent.tools.screener import screen_stocks
 
 _FIXTURES_DIR = str(pathlib.Path(__file__).resolve().parent.parent.parent / "fixtures")
 
@@ -186,7 +186,13 @@ TOOLS_SCHEMA = [
                     },
                     "price_min": {"type": "number", "description": "Minimum price filter. Default 0."},
                     "price_max": {"type": "number", "description": "Maximum price filter. Optional."},
-                    "limit": {"type": "integer", "description": "Max results to return. Default 10."},
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            "Max results to return, default 10 (sectors currently hold 5 "
+                            "symbols each, so results are capped there)."
+                        ),
+                    },
                 },
                 "required": ["sector"],
             },
