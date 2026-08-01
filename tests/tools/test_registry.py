@@ -19,6 +19,7 @@ class _FakeHttpClients:
     kite = None  # unused in mock mode
     tavily = None  # overridden per-test where get_news is exercised
     indian_stock = None  # unused in mock mode
+    alpha_vantage = None  # unused in mock mode
 
 
 def test_tools_schema_names_include_all_expected_tools():
@@ -32,6 +33,7 @@ def test_tools_schema_names_include_all_expected_tools():
         "capture_screen",
         "show_chart",
         "get_stock_fundamentals",
+        "screen_stocks",
     }
 
 
@@ -238,6 +240,16 @@ async def test_executor_dispatches_get_stock_fundamentals_in_mock_mode():
     assert "error" not in result
 
 
+@pytest.mark.asyncio
+async def test_executor_dispatches_screen_stocks_in_mock_mode():
+    executor = make_tool_executor(_FakeConfig(), _FakeHttpClients())
+
+    result = await executor(ToolCall(id="1", name="screen_stocks", arguments={"sector": "tech"}))
+
+    assert "results" in result
+    assert "error" not in result
+
+
 def test_filter_tool_arguments_keeps_only_schema_declared_keys():
     assert filter_tool_arguments("show_chart", {"symbol": "RELIANCE"}) == {"symbol": "RELIANCE"}
     # output_dir/interval are real render_chart parameters but are NOT declared
@@ -247,6 +259,12 @@ def test_filter_tool_arguments_keeps_only_schema_declared_keys():
     ) == {"symbol": "RELIANCE"}
     assert filter_tool_arguments("get_positions_holdings", {"anything": 1}) == {}
     assert filter_tool_arguments("unknown_tool", {"symbol": "X"}) == {}
+
+
+def test_filter_tool_arguments_drops_undeclared_keys_for_screen_stocks():
+    assert filter_tool_arguments(
+        "screen_stocks", {"sector": "tech", "request_interval_seconds": 0.0}
+    ) == {"sector": "tech"}
 
 
 @pytest.mark.asyncio

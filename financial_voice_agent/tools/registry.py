@@ -22,6 +22,7 @@ from financial_voice_agent.tools.kite_client import (
 )
 from financial_voice_agent.tools.news import get_news
 from financial_voice_agent.tools.quotes import get_positions_holdings, get_quote
+from financial_voice_agent.tools.screener import screen_stocks
 from financial_voice_agent.tools.screen import (
     WindowNotFoundError,
     capture_region,
@@ -163,6 +164,34 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "screen_stocks",
+            "description": (
+                "Screen stocks in a sector by momentum (RSI) and price range, returning "
+                "the top matches ranked by momentum strength. Use for requests like "
+                "'show me momentum stocks in tech' or 'top 10 pharma stocks under 2000'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sector": {
+                        "type": "string",
+                        "description": "Sector name, e.g. 'tech', 'finance', 'pharma', 'auto'",
+                    },
+                    "momentum_threshold": {
+                        "type": "number",
+                        "description": "Minimum RSI to count as high-momentum. Default 70.",
+                    },
+                    "price_min": {"type": "number", "description": "Minimum price filter. Default 0."},
+                    "price_max": {"type": "number", "description": "Maximum price filter. Optional."},
+                    "limit": {"type": "integer", "description": "Max results to return. Default 10."},
+                },
+                "required": ["sector"],
+            },
+        },
+    },
 ]
 
 
@@ -237,6 +266,11 @@ async def _dispatch(
     if call.name == "get_stock_fundamentals":
         return await get_stock_fundamentals(
             **args, http_client=http_clients.indian_stock, mode=config.mode,
+            fixtures_dir=_FIXTURES_DIR,
+        )
+    if call.name == "screen_stocks":
+        return await screen_stocks(
+            **args, http_client=http_clients.alpha_vantage, mode=config.mode,
             fixtures_dir=_FIXTURES_DIR,
         )
     raise UnknownToolError(f"Unknown tool: {call.name}")
