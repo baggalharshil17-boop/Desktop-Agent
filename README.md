@@ -73,6 +73,7 @@ python scripts/kite_login.py
 | Fish Audio (TTS alternative) | `FISH_AUDIO_API_KEY` | fish.audio/app/api-keys | `s2.1-pro-free` model works free; other models need funded API credit |
 | Tavily (news search) | `TAVILY_API_KEY` | tavily.com | Free to 1k searches/month |
 | Indian Stock API (fundamentals -- P/E, market cap, etc.) | `INDIAN_STOCK_API_KEY` | indianapi.in (dashboard's API/Manage Keys section) | Free plan available |
+| Alpha Vantage (momentum stock screening) | `ALPHA_VANTAGE_API_KEY` | alphavantage.co/support/#api-key | Free tier: 5 requests/min, 25/day -- a single screen can take up to ~2 minutes due to built-in rate-limit pacing |
 | Zerodha Kite Connect (live trading data) | `KITE_API_KEY` / `KITE_API_SECRET` / `KITE_ACCESS_TOKEN` | developers.kite.trade | Paid (~₹500/month), only needed for `mode: "live"` -- skip entirely with `mode: "mock"` |
 
 ## Development
