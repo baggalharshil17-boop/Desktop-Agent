@@ -177,3 +177,89 @@ async def test_screen_stocks_paces_requests_by_configured_interval():
     )
 
     assert sleep_calls == [5.0, 5.0, 5.0, 5.0]
+
+
+@pytest.mark.asyncio
+async def test_screen_stocks_maintains_pacing_across_rsi_to_price_transition():
+    """Verify that the gap between RSI phase and price phase respects rate limit.
+
+    _rate_limited_map restarts its counter for each call, so without an explicit
+    sleep before the price phase, there would be no gap between the last RSI call
+    and the first price call. This test ensures that gap is maintained.
+    """
+    sleep_calls = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    symbols = SECTOR_SYMBOLS["tech"]
+    # First 2 symbols pass RSI threshold, rest fail -- so price phase fetches 2 prices
+    responses = {}
+    for i, symbol in enumerate(symbols):
+        rsi = 75.0 if i < 2 else 40.0
+        responses[(symbol, "RSI")] = _rsi_response(rsi)
+    for i in range(2):
+        responses[(symbols[i], "GLOBAL_QUOTE")] = _quote_response(100.0)
+    client = _client_with_responses(responses)
+
+    result = await screen_stocks(
+        "tech", http_client=client, mode="live", momentum_threshold=70.0,
+        limit=10, request_interval_seconds=3.0, sleep_fn=fake_sleep,
+    )
+
+    # RSI phase: 5 calls with 4 sleeps between them (before calls 2-5)
+    # Then 1 sleep for the RSI→price transition gap
+    # Then price phase: 2 calls with 1 sleep between them (before call 2)
+    # Total: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+    assert sleep_calls == [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+    assert result["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_screen_stocks_drops_symbol_on_network_failure_during_price_fetch():
+    """Verify that network failures during price fetch degrade gracefully.
+
+    Price fetch failures should drop the individual symbol, not fail the whole screen,
+    even though _fetch_price re-raises _RateLimited.
+    """
+    symbols = SECTOR_SYMBOLS["tech"]
+    responses = {}
+    # All symbols pass RSI threshold
+    for symbol in symbols:
+        responses[(symbol, "RSI")] = _rsi_response(75.0)
+    # First symbol's price fetch will fail; rest succeed
+    for i, symbol in enumerate(symbols[1:], 1):
+        responses[(symbol, "GLOBAL_QUOTE")] = _quote_response(100.0)
+
+    # Mock handler that raises ConnectError only for the first symbol's GLOBAL_QUOTE
+    call_count = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = dict(request.url.params)
+        function = params.get("function")
+        symbol = params.get("symbol")
+
+        if function == "GLOBAL_QUOTE" and symbol == symbols[0]:
+            if call_count.get(symbol, 0) == 0:
+                call_count[symbol] = 1
+                raise httpx.ConnectError("connection refused for symbol 0")
+
+        key = (symbol, function)
+        body = responses.get(key, {})
+        return httpx.Response(200, json=body)
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://www.alphavantage.co"
+    )
+
+    result = await screen_stocks(
+        "tech", http_client=client, mode="live", momentum_threshold=70.0,
+        request_interval_seconds=0.0,
+    )
+
+    # First symbol should be dropped due to price fetch failure; others should succeed
+    assert "error" not in result
+    assert result["count"] == 4  # 5 symbols - 1 dropped
+    returned_symbols = {r["symbol"] for r in result["results"]}
+    assert symbols[0] not in returned_symbols
+    assert all(s in returned_symbols for s in symbols[1:])

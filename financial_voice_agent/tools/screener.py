@@ -103,7 +103,12 @@ async def _fetch_rsi(http_client, symbol: str) -> dict | None:
 
 
 async def _fetch_price(http_client, symbol: str) -> float | None:
-    """Fetches the latest close price for one symbol, for price-range filtering."""
+    """Fetches the latest close price for one symbol, for price-range filtering.
+
+    Returns None (not an exception) on any per-symbol failure including network errors --
+    a single bad symbol must not fail the whole screen, it should just be skipped.
+    Rate-limiting is the one exception to that: see _RateLimited.
+    """
     try:
         response = await http_client.get(
             "/query", params={"function": "GLOBAL_QUOTE", "symbol": symbol}
@@ -116,9 +121,7 @@ async def _fetch_price(http_client, symbol: str) -> float | None:
         return float(price) if price else None
     except _RateLimited:
         raise
-    except httpx.NetworkError:  # Network errors propagate to fail the whole screen
-        raise
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- any failure (network, malformed data, etc.) drops this symbol
         return None
 
 
@@ -171,6 +174,11 @@ async def screen_stocks(
 
     candidates.sort(key=lambda c: c["rsi"], reverse=True)
     candidates = candidates[:limit]
+
+    # Ensure pacing gap between RSI phase and price phase to maintain rate limit compliance.
+    # _rate_limited_map restarts its counter for each call, so there's no sleep between
+    # the last RSI request and the first price request without this explicit gap.
+    await sleep_fn(request_interval_seconds)
 
     try:
         prices = await _rate_limited_map(
