@@ -12,6 +12,7 @@ FISH_AUDIO_BASE_URL = "https://api.fish.audio"
 KITE_BASE_URL = "https://api.kite.trade"
 TAVILY_BASE_URL = "https://api.tavily.com"
 INDIAN_STOCK_BASE_URL = "https://stock.indianapi.in"
+ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co"
 
 GROQ_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 REST_TIMEOUT = httpx.Timeout(15.0, connect=10.0)
@@ -25,6 +26,7 @@ class HTTPClients:
     kite: httpx.AsyncClient
     tavily: httpx.AsyncClient
     indian_stock: httpx.AsyncClient
+    alpha_vantage: httpx.AsyncClient
 
 
 async def create_http_clients(config: Config) -> HTTPClients:
@@ -69,7 +71,20 @@ async def create_http_clients(config: Config) -> HTTPClients:
         timeout=REST_TIMEOUT,
     )
 
-    return HTTPClients(groq=groq, tts=tts, kite=kite, tavily=tavily, indian_stock=indian_stock)
+    # Alpha Vantage authenticates via an `apikey` query parameter on every
+    # request, not a header -- setting it as a client-level default param
+    # means every call in screener.py gets it merged in automatically
+    # without needing to pass it explicitly each time.
+    alpha_vantage = httpx.AsyncClient(
+        base_url=ALPHA_VANTAGE_BASE_URL,
+        params={"apikey": config.alpha_vantage_api_key or ""},
+        timeout=REST_TIMEOUT,
+    )
+
+    return HTTPClients(
+        groq=groq, tts=tts, kite=kite, tavily=tavily,
+        indian_stock=indian_stock, alpha_vantage=alpha_vantage,
+    )
 
 
 async def close_http_clients(clients: HTTPClients) -> None:
@@ -78,3 +93,4 @@ async def close_http_clients(clients: HTTPClients) -> None:
     await clients.kite.aclose()
     await clients.tavily.aclose()
     await clients.indian_stock.aclose()
+    await clients.alpha_vantage.aclose()

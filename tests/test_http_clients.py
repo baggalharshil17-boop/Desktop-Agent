@@ -41,6 +41,7 @@ def _make_config(
         kite_access_token=kite_access_token,
         tavily_api_key="tavily-key",
         indian_stock_api_key="indian-stock-secret",
+        alpha_vantage_api_key="alpha-vantage-secret",
     )
 
 
@@ -56,10 +57,12 @@ async def test_create_http_clients_returns_one_client_per_vendor():
         assert isinstance(clients.kite, httpx.AsyncClient)
         assert isinstance(clients.tavily, httpx.AsyncClient)
         assert isinstance(clients.indian_stock, httpx.AsyncClient)
+        assert isinstance(clients.alpha_vantage, httpx.AsyncClient)
         # Each vendor gets a distinct client instance (no accidental sharing).
         assert len({
-            id(clients.groq), id(clients.tts), id(clients.kite), id(clients.tavily), id(clients.indian_stock)
-        }) == 5
+            id(clients.groq), id(clients.tts), id(clients.kite), id(clients.tavily),
+            id(clients.indian_stock), id(clients.alpha_vantage),
+        }) == 6
     finally:
         await close_http_clients(clients)
 
@@ -170,5 +173,16 @@ async def test_indian_stock_client_carries_api_key_header():
     clients = await create_http_clients(config)
     try:
         assert clients.indian_stock.headers["X-Api-Key"] == "indian-stock-secret"
+    finally:
+        await close_http_clients(clients)
+
+
+@pytest.mark.asyncio
+async def test_alpha_vantage_client_carries_api_key_as_query_param():
+    config = _make_config()
+
+    clients = await create_http_clients(config)
+    try:
+        assert clients.alpha_vantage.params["apikey"] == "alpha-vantage-secret"
     finally:
         await close_http_clients(clients)
